@@ -55,7 +55,7 @@ class SetupWizard(ctk.CTkToplevel if ctk else object):  # type: ignore
         if ctk is None:
             raise RuntimeError("customtkinter required")
         super().__init__(master)
-        self.title("AgentBus — настройка")
+        self.title("NVCode — настройка")
         self.geometry("560x520")
         self.resizable(False, False)
         self.transient(master)
