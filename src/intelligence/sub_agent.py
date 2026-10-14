@@ -129,8 +129,7 @@ class SubAgent:
         Enabled when AGENTBUS_SUB_ISOLATE=1. Keeps subtask JSON out of the
         parent channel queue so progress/claim do not collide with user tasks.
         """
-        import os as _os
-        if (_os.getenv("AGENTBUS_SUB_ISOLATE") or "").strip().lower() not in ("1", "true", "yes", "on"):
+        if (os.getenv("AGENTBUS_SUB_ISOLATE") or "").strip().lower() not in ("1", "true", "yes", "on"):
             return self.channel
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in (parent_id or "x"))[:24]
         return f"{self.channel}__sub_{safe}"
@@ -154,7 +153,6 @@ class SubAgent:
             logger.info("sub_agents disabled — spawn skipped")
             return SubAgentResult(task_ids=[], channel=self.channel, parent_id=parent_id)
 
-        # Resolve depth
         depth = 0
         if parent_depth is not None:
             depth = int(parent_depth)
@@ -211,7 +209,6 @@ class SubAgent:
                 json.dumps(payload, ensure_ascii=False, indent=2),
             )
             ids.append(tid)
-        # registry for progress tracking
         if parent_id and ids:
             self._save_registry(parent_id, ids, channel=child_ch)
         return SubAgentResult(task_ids=ids, channel=child_ch, parent_id=parent_id)
@@ -248,7 +245,6 @@ class SubAgent:
             return []
 
     def _find_task_file(self, task_id: str) -> tuple[str, Path] | None:
-        # Search parent channel + any isolated __sub_* channels
         channels = {self.channel}
         ch_root = self.bus_root / "channels"
         if ch_root.is_dir():
@@ -275,7 +271,6 @@ class SubAgent:
             mtime = path.stat().st_mtime
         except Exception:
             mtime = 0.0
-        # normalize stage names
         if state == "errors":
             state = "error"
         return SubTaskStatus(
@@ -346,7 +341,7 @@ class SubAgent:
                 )
                 cancelled.append(tid)
             except (OSError, ValueError) as exc:
-                logger.warning("cancel %s: %s", tid, exp)
+                logger.warning("cancel %s: %s", tid, exc)
         return cancelled
 
     def wait_brief(
