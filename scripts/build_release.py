@@ -127,7 +127,7 @@ def write_manifest(
             "size_bytes": size_bytes,
             "format": "zip",
         },
-        "user_data_paths": ["%APPDATA%/AgentBus"],
+        "user_data_paths": ["%APPDATA%/AgentBus", "%APPDATA%/NVCode"],
         "install_paths_hint": ["binaries", "runtime", "ui", "skills", "src"],
     }
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Public URL of the zip (defaults to GitHub Releases path template)",
     )
-    ap.add_argument("--repo", default="bananapowerrr/Dispatcher")
+    ap.add_argument("--repo", default="bananapowerrr/NVCode")
     args = ap.parse_args(argv)
 
     root = repo_root()
@@ -155,15 +155,15 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     version = args.version.lstrip("v")
-    asset_name = f"AgentBus-{version}-src.zip"
+    asset_name = f"NVCode-{version}-src.zip"
     zip_path = out / asset_name
     files = collect_files(root)
     if not files:
         # minimal fallback for sandbox without full tree
         marker = out / "_build_marker.txt"
-        marker.write_text(f"AgentBus {version}\n", encoding="utf-8")
+        marker.write_text(f"NVCode {version}\n", encoding="utf-8")
         files = [marker]
-        build_zip(files, out, zip_path, prefix=f"AgentBus-{version}")
+        build_zip(files, out, zip_path, prefix=f"NVCode-{version}")
     else:
         build_zip(files, root, zip_path, prefix=f"AgentBus-{version}")
 
