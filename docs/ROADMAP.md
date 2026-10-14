@@ -25,7 +25,7 @@
 ### Update principles
 
 1. **App does not replace itself while running** — external updater.
-2. **User data never in the install package path** (`%APPDATA%/NVCode/` is the target for new installs; migration of existing user data must be explicit).
+2. **User data never in the install package path** (existing `%APPDATA%/AgentBus/` remains a legacy data path until a tested migration is implemented; do not rename it yet).
 3. **Fail-closed manifest**: missing sha256 / invalid JSON → no update offer.
 4. **Git is for developers**; Releases + UpdateChecker are for users.
 
