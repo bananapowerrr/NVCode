@@ -45,7 +45,7 @@ def download(url: str, dest: Path, timeout: float = 120.0) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="AgentBus external updater")
+    ap = argparse.ArgumentParser(description="NVCode external updater")
     ap.add_argument("--job", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--download-only", action="store_true")
