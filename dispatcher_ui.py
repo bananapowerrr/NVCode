@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Запуск AgentBus UI. Диспетчер (runtime) — отдельно: python dispatcher.py"""
+"""Запуск NVCode UI. Runtime запускается отдельно: python dispatcher.py"""
 from __future__ import annotations
 
 import os
