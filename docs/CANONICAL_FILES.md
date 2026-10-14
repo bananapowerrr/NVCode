@@ -1,18 +1,5 @@
-# Canonical — R3 Recovery Controller
+# Retired: Google Drive canonical file IDs
 
-| File | file_id |
-|------|---------|
-| recovery_controller.py | `1q7knZH4JSef4kbfqraDymOVnAhGr1vk8` |
-| runtime_ops.py | `17410JhK2ug2zx0t_FitdIgPApY3nCB0c` |
-| product_surface.py | `1FuwZ-Xn5Qg0qjoaDlbrGvELEzV7bB4el` |
-| execution_evidence.py | `1J9he25xk-RUNOIgOTSXuf9PtGBz8wgiI` |
-| terminal_path.py | `1HMyrwLy_H8q0FJMN2IWqLABa8VcFiwEG` |
+This document previously listed Google Drive file IDs for synchronization. That workflow is no longer used; the IDs have intentionally been removed from the active documentation.
 
-## Flow
-```
-ERROR finish_task
-  → run_recovery(apply_plan=False)  # record decision
-Chat handle_error_recovery
-  → run_recovery(apply_plan=True)   # plan replan if needed
-enqueued: always false
-```
+The canonical code repository is now [bananapowerrr/NVCode](https://github.com/bananapowerrr/NVCode). Review current branches and pull requests there. See [docs/INDEX.md](INDEX.md) for the maintained documentation map.
