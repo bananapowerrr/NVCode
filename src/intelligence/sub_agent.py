@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,24 @@ MAX_DEPTH = 2          # parent depth 0 → children depth 1 → grandchildren b
 DEFAULT_MAX_CHILDREN = 8
 ABSOLUTE_MAX_CHILDREN = 16
 
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text via tmp + os.replace (TD-002: no partial registry on crash)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if tmp.is_file():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _sub_agents_enabled() -> bool:
@@ -110,8 +129,8 @@ class SubAgent:
         Enabled when AGENTBUS_SUB_ISOLATE=1. Keeps subtask JSON out of the
         parent channel queue so progress/claim do not collide with user tasks.
         """
-        import os
-        if (os.getenv("AGENTBUS_SUB_ISOLATE") or "").strip().lower() not in ("1", "true", "yes", "on"):
+        import os as _os
+        if (_os.getenv("AGENTBUS_SUB_ISOLATE") or "").strip().lower() not in ("1", "true", "yes", "on"):
             return self.channel
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in (parent_id or "x"))[:24]
         return f"{self.channel}__sub_{safe}"
@@ -211,9 +230,9 @@ class SubAgent:
             "created_at": time.time(),
         }
         try:
-            self._registry_path(parent_id).write_text(
+            _atomic_write_text(
+                self._registry_path(parent_id),
                 json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
         except OSError as exc:
             logger.warning("sub_agent registry save: %s", exc)
@@ -327,7 +346,7 @@ class SubAgent:
                 )
                 cancelled.append(tid)
             except (OSError, ValueError) as exc:
-                logger.warning("cancel %s: %s", tid, exc)
+                logger.warning("cancel %s: %s", tid, exp)
         return cancelled
 
     def wait_brief(
