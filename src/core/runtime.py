@@ -88,6 +88,7 @@ class Runtime(RuntimeOps, RuntimeProcess):
         self.metrics = GLOBAL_METRICS
         self._backoff: dict[str, float] = {}
         self._running = False
+        self._desktop_queue_cursor = 0
         self._hb_last = 0.0
         self._probe_last = 0.0
         self._metrics_last = 0.0
@@ -434,6 +435,46 @@ class Runtime(RuntimeOps, RuntimeProcess):
                 with self._dedupe_lock:
                     self._dedupe_inflight.discard(fp)
 
+    def _claim_desktop_queue(self) -> dict | None:
+        """Poll the shared and project-local desktop queues fairly."""
+        try:
+            from core.config import BASE_DIR, PROJECTS, PROJECT_ROOT
+            from core.local_queue import get_local_queue
+
+            candidates = [Path(BASE_DIR), *(Path(p) for p in PROJECTS.values())]
+            if PROJECT_ROOT:
+                candidates.append(Path(PROJECT_ROOT))
+            roots: list[Path] = []
+            seen: set[str] = set()
+            for path in candidates:
+                try:
+                    key = str(path.resolve())
+                except OSError:
+                    key = str(path)
+                if key not in seen:
+                    seen.add(key)
+                    roots.append(path)
+            if not roots:
+                return None
+
+            start = int(getattr(self, "_desktop_queue_cursor", 0)) % len(roots)
+            for offset in range(len(roots)):
+                index = (start + offset) % len(roots)
+                root = roots[index]
+                if not (root / ".agentbus" / "desktop_queue").is_dir():
+                    continue
+                raw = get_local_queue(root).claim()
+                if raw is not None:
+                    self._desktop_queue_cursor = (index + 1) % len(roots)
+                    return raw
+            self._desktop_queue_cursor = (start + 1) % len(roots)
+        except Exception as exc:
+            try:
+                self.log.write(f"desktop queue poll: {type(exc).__name__}: {exc}")
+            except Exception:
+                pass
+        return None
+
     def run_forever(self) -> None:
         lock = DispatcherLock()
         if not lock.acquire():
@@ -537,9 +578,7 @@ class Runtime(RuntimeOps, RuntimeProcess):
                         pass
                 raw = None
                 try:
-                    from core.local_queue import get_local_queue
-                    from core.config import BASE_DIR
-                    raw = get_local_queue(Path(BASE_DIR)).claim()
+                    raw = self._claim_desktop_queue()
                 except Exception:
                     raw = None
                 if raw is None:

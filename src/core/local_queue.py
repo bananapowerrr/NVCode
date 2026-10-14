@@ -6,6 +6,7 @@ Chat UI is the main channel. File-bus (channels/) is optional for phone/remote.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -45,22 +46,38 @@ class LocalQueue:
         data["id"] = tid
         data.setdefault("status", "PENDING")
         data.setdefault("channel", "desktop")
-        meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-        meta = dict(meta)
+        supplied_meta = data.get("metadata")
+        if supplied_meta is None:
+            meta = {}
+        elif isinstance(supplied_meta, dict):
+            meta = dict(supplied_meta)
+        else:
+            raise ValueError("metadata must be an object")
         meta.setdefault("source", "desktop_chat")
         meta.setdefault("primary_channel", "desktop")
         data["metadata"] = meta
+        from core.task_contract import normalize_task
+
+        # LocalQueue is a public ingress too; never rely on callers to have
+        # passed through TaskService before a task becomes persistent.
+        data.update(normalize_task(data))
         with self._lock:
-            self._q.append(data)
             if self._spill is not None:
+                path = self._spill / f"{tid}.json"
+                tmp = path.with_suffix(path.suffix + ".tmp")
                 try:
-                    path = self._spill / f"{tid}.json"
-                    path.write_text(
-                        json.dumps(data, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
+                    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+                        fh.write(json.dumps(data, ensure_ascii=False, indent=2))
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp, path)
                 except OSError:
-                    pass
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+            self._q.append(data)
         return tid
 
     def claim(self) -> dict[str, Any] | None:

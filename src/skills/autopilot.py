@@ -490,12 +490,13 @@ class Autopilot:
     ) -> list[Path]:
         """Materialize tasks as JSON files under bus_root/channels/<ch>/incoming."""
         import json
+        from core.bus import FileBus
 
         tasks = list(tasks if tasks is not None else self.scan())
         if limit is not None:
             tasks = tasks[: max(0, limit)]
-        incoming = Path(bus_root) / "channels" / channel / "incoming"
-        incoming.mkdir(parents=True, exist_ok=True)
+        bus = FileBus(Path(bus_root), (channel,))
+        incoming = bus.paths(channel)["incoming"]
         written: list[Path] = []
         for t in tasks:
             payload = t.to_bus_payload(
@@ -507,11 +508,12 @@ class Autopilot:
             # Skip if already present (stable id from message hash)
             if path.exists():
                 continue
-            path.write_text(
+            written.append(bus.write(
+                channel,
+                "incoming",
+                f"{tid}.json",
                 json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            written.append(path)
+            ))
         return written
 
 

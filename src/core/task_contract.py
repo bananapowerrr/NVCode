@@ -24,10 +24,12 @@ Does not depend on jsonschema — pure Python, offline-safe.
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from core.tasks import STATES
 
 REQUIRED_KEYS = ("id", "message")
+_SAFE_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 OPTIONAL_DEFAULTS: dict[str, Any] = {
     "project": "",
     "files": [],
@@ -98,6 +100,8 @@ def normalize_task(raw: dict[str, Any] | None) -> dict[str, Any]:
         raise TaskContractError("task must be a JSON object")
 
     tid = _as_str(raw.get("id"), "id", allow_empty=False)
+    if not _SAFE_TASK_ID.fullmatch(tid):
+        raise TaskContractError("id must be a safe filename token (letters, digits, dot, underscore, hyphen; max 128)")
     message = _as_str(raw.get("message"), "message", allow_empty=False)
     if len(message) > 100_000:
         raise TaskContractError("message too long (>100k)")

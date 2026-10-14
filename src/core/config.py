@@ -104,6 +104,17 @@ def resolve_project(name: str) -> Path:
             if k.lower().replace("-", "_") == key:
                 p = v
                 break
+    if not p and raw:
+        # UI/workflow payloads may carry the absolute path rather than the
+        # project alias. Accept it only when it resolves to an allowlisted root.
+        try:
+            candidate = Path(raw).expanduser().resolve()
+            for registered in PROJECTS.values():
+                if Path(registered).expanduser().resolve() == candidate:
+                    p = candidate
+                    break
+        except (OSError, RuntimeError):
+            pass
     if not p:
         known = sorted({k for k in PROJECTS if not k.islower() or "_" in k or "-" in k})[:12]
         raise ValueError(

@@ -1,18 +1,31 @@
 # -*- coding: utf-8 -*-
-"""Общая файловая шина AgentBus v2, безопасная для Dropbox.
+"""Общая файловая шина AgentBus v2.
 
 Состояния: incoming → processing → done | errors | deferred.
-Запись с fsync; move через copy2 + unlink (устойчиво к Dropbox locks).
+Запись выполняется через fsync + atomic replace; claim — через atomic rename.
 """
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
 STATES: tuple[str, ...] = ("incoming", "processing", "done", "errors", "deferred", "logs")
+_SAFE_CHANNEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _safe_relative_filename(filename: str) -> Path:
+    """Allow nested relative names without allowing filesystem escape."""
+    value = str(filename or "").replace("\\", "/")
+    if not value or "\x00" in value or value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+        raise ValueError("unsafe bus filename")
+    parts = value.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("unsafe bus filename")
+    return Path(*parts)
 
 T = TypeVar("T")
 
@@ -31,6 +44,8 @@ class FileBus:
         even if not listed in AGENTBUS_CHANNELS.
         """
         ch = (channel or "").strip()
+        if not _SAFE_CHANNEL.fullmatch(ch):
+            raise ValueError(f"Недопустимое имя канала: {channel}")
         # desktop = primary PC chat queue results (not phone file-bus)
         if ch not in self.channels and "__sub_" not in ch and ch != "desktop":
             raise ValueError(f"Неизвестный канал: {channel}")
@@ -74,7 +89,7 @@ class FileBus:
 
     def write(self, channel: str, state: str, filename: str, text: str) -> Path:
         """Записать текст в channels/<channel>/<state>/<filename> с fsync."""
-        path = self.paths(channel)[state] / filename
+        path = self.paths(channel)[state] / _safe_relative_filename(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         def write_once() -> Path:
@@ -96,8 +111,9 @@ class FileBus:
             False — исходник уже отсутствует (гонка: забрал другой инстанс).
             При False вызывающий НЕ должен продолжать обработку.
         """
-        src = self.paths(channel)[state_from] / filename
-        dst = self.paths(channel)[state_to] / filename
+        safe_name = _safe_relative_filename(filename)
+        src = self.paths(channel)[state_from] / safe_name
+        dst = self.paths(channel)[state_to] / safe_name
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         def move_once() -> bool:
@@ -108,16 +124,10 @@ class FileBus:
                 src.replace(dst)
                 return True
             except FileNotFoundError:
-                # Desktop tasks may only have write() artifacts; treat as soft ok if dst exists
-                #
-                # Известный долг Phase 2: этот soft-ok неотличим от
-                # проигранной гонки — в обоих случаях src нет, а dst есть.
-                # Поэтому на канале desktop задача может быть заявлена и
-                # обработана дважды, даже с атомарным rename. Обычные
-                # каналы защищены (см. test_concurrent_move_claims_exactly_once),
-                # desktop ждёт claim через O_CREAT|O_EXCL.
-                if channel == "desktop" and dst.is_file():
-                    return True
+                # Destination existence proves only that another caller may
+                # have won the rename; it is never evidence that this caller
+                # owns the claim. Direct desktop processing seeds are handled
+                # by Runtime.process and do not use this incoming claim path.
                 return False
             # PermissionError и sharing violation НЕ глотаем: их ловит _retry.
             # Глотать нельзя — если rename не прошёл, перехода не было, и

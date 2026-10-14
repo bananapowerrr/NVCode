@@ -39,6 +39,34 @@ def test_submit_payload_to_desktop_queue(tmp_path, monkeypatch):
     assert "format" in (item.get("message") or "")
 
 
+def test_default_submit_rejects_invalid_status_without_queueing(tmp_path, monkeypatch):
+    _reset_queue(tmp_path, monkeypatch)
+    from core.task_service import submit_payload
+    from core.local_queue import get_local_queue
+
+    tid, err = submit_payload(
+        {"id": "bad-status", "message": "hello", "status": "RUNNING"},
+        root=tmp_path,
+    )
+    assert tid is None
+    assert err and "status" in err
+    assert get_local_queue(tmp_path).size() == 0
+
+
+def test_default_submit_rejects_malformed_metadata_without_queueing(tmp_path, monkeypatch):
+    _reset_queue(tmp_path, monkeypatch)
+    from core.task_service import submit_payload
+    from core.local_queue import get_local_queue
+
+    tid, err = submit_payload(
+        {"id": "bad-metadata", "message": "hello", "metadata": ["not", "an object"]},
+        root=tmp_path,
+    )
+    assert tid is None
+    assert err and "metadata" in err
+    assert get_local_queue(tmp_path).size() == 0
+
+
 def test_resubmit_from_row(tmp_path, monkeypatch):
     _reset_queue(tmp_path, monkeypatch)
     from core.task_service import resubmit_from_row

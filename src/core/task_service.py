@@ -91,9 +91,18 @@ def submit_payload(
     raw = dict(payload)
     raw.setdefault("channel", "desktop")
     raw.setdefault("status", "PENDING")
-    meta = dict(raw.get("metadata") or {})
-    meta.setdefault("intake_source", source)
-    meta.setdefault("primary_channel", "desktop")
+    supplied_meta = raw.get("metadata")
+    if supplied_meta is None:
+        meta: Any = {}
+    elif isinstance(supplied_meta, dict):
+        meta = dict(supplied_meta)
+    else:
+        # Preserve malformed metadata for the canonical validator to reject;
+        # do not coerce or silently discard it at the queue boundary.
+        meta = supplied_meta
+    if isinstance(meta, dict):
+        meta.setdefault("intake_source", source)
+        meta.setdefault("primary_channel", "desktop")
     raw["metadata"] = meta
     raw["channel"] = "desktop"
 
@@ -102,40 +111,19 @@ def submit_payload(
         return None, "empty message"
     raw["message"] = msg
 
-    # Intake (fail-closed when soft_intake=False)
+    # Intake is always fail-closed. ``soft_intake`` is retained for API
+    # compatibility; it must never authorize an invalid task into the queue.
     try:
-        from core.intake_pipeline import try_accept_task_raw, accept_task_raw, IntakeError
+        from core.intake_pipeline import accept_task_raw
 
-        if soft_intake:
-            task, err = try_accept_task_raw(raw, source=source)
-            if task is not None:
-                cleaned = task.to_dict() if hasattr(task, "to_dict") else dict(raw)
-                cleaned.setdefault("id", getattr(task, "id", None) or raw.get("id"))
-                raw = cleaned
-            # soft: still queue even if intake soft-fails (UI may show later)
-            # but if explicit security reject string, surface it
-            if err and ("path" in err.lower() or "command" in err.lower() or "security" in err.lower() or "traversal" in err.lower()):
-                return None, err
-        else:
-            try:
-                task = accept_task_raw(raw, source=source, strict=True)
-                cleaned = task.to_dict() if hasattr(task, "to_dict") else dict(raw)
-                cleaned.setdefault("id", getattr(task, "id", None) or raw.get("id"))
-                raw = cleaned
-            except IntakeError as e:
-                return None, str(e)
-    except ImportError:
-        pass  # intake optional in minimal installs
+        task = accept_task_raw(raw, source=source, strict=True)
+        cleaned = task.to_dict() if hasattr(task, "to_dict") else dict(raw)
+        cleaned.setdefault("id", getattr(task, "id", None) or raw.get("id"))
+        raw = cleaned
+    except ImportError as exc:
+        return None, f"intake unavailable: {exc}"
     except Exception as exc:
-        if not soft_intake:
-            return None, f"intake: {type(exc).__name__}: {exc}"
-        try:
-            import logging
-            logging.getLogger("agentbus.task_service").warning(
-                "intake soft-fail: %s: %s", type(exc).__name__, exc
-            )
-        except Exception:
-            pass
+        return None, f"intake: {type(exc).__name__}: {exc}"
 
     base = _resolve_root(root)
     try:
@@ -159,17 +147,18 @@ def submit_payload(
         if do:
             try:
                 import json
+                from core.bus import FileBus
 
                 ch = (phone_channel or "gpt").strip() or "gpt"
-                incoming = base / "channels" / ch / "incoming"
-                incoming.mkdir(parents=True, exist_ok=True)
                 mirror = dict(raw)
                 mirror["id"] = tid
                 mirror["channel"] = ch
                 mirror.setdefault("metadata", {})["mirrored_from"] = "desktop"
-                (incoming / f"{tid}.json").write_text(
+                FileBus(base, (ch,)).write(
+                    ch,
+                    "incoming",
+                    f"{tid}.json",
                     json.dumps(mirror, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
                 )
             except Exception:
                 pass

@@ -68,20 +68,18 @@ class ProjectWorkflow:
         return out
 
     def _reconcile_plan(self, root) -> dict[str, Any]:
-        """Понизить осиротевшие шаги плана.
-
-        Шаг в IN_PROGRESS без живой задачи (или с задачей, которой уже нет)
-        остаётся в этом состоянии навсегда: очередь его не переиздаст, а
-        пользователь не видит, что работа встала. Возвращаем такие шаги в
-        PENDING, чтобы плата снова могла их отдать.
-        """
+        """Reconcile plan claims against persistent queue and terminal records."""
         from app.plan_service import PlanService
         from core.local_queue import get_local_queue
-        from intelligence.living_plan import is_finished
+        from intelligence.dynamic_queue import on_task_terminal
+        from intelligence.living_plan import normalize_status
+        import json
 
+        root = Path(root).resolve()
         ps = PlanService(str(root))
         plan = ps.load()
         live: set[str] = set()
+        terminal: dict[str, tuple[str, dict[str, Any]]] = {}
         try:
             q = get_local_queue(root)
             for raw in list(getattr(q, "_q", []) or []):
@@ -91,14 +89,95 @@ class ProjectWorkflow:
         except Exception:
             pass
 
+        scan_roots = [root]
+        try:
+            from core.config import BUS_ROOT, BASE_DIR
+            scan_roots.extend((Path(BUS_ROOT), Path(BASE_DIR)))
+        except Exception:
+            pass
+        unique_roots: list[Path] = []
+        seen_roots: set[str] = set()
+        for base in scan_roots:
+            try:
+                key = str(base.resolve())
+            except OSError:
+                key = str(base)
+            if key not in seen_roots:
+                seen_roots.add(key)
+                unique_roots.append(base)
+
+        for base in unique_roots:
+            queue_dir = base / ".agentbus" / "desktop_queue"
+            if queue_dir.is_dir():
+                for path in queue_dir.glob("*.json"):
+                    try:
+                        raw = json.loads(path.read_text(encoding="utf-8"))
+                        tid = str(raw.get("id") or "") if isinstance(raw, dict) else ""
+                        if tid:
+                            live.add(tid)
+                    except Exception:
+                        continue
+            for channels_dir in (base / "channels", base / ".agentbus" / "channels"):
+                if not channels_dir.is_dir():
+                    continue
+                try:
+                    channel_dirs = [p for p in channels_dir.iterdir() if p.is_dir()]
+                except OSError:
+                    continue
+                for channel_dir in channel_dirs:
+                    for state in ("incoming", "processing", "deferred", "done", "errors"):
+                        state_dir = channel_dir / state
+                        if not state_dir.is_dir():
+                            continue
+                        for path in state_dir.glob("*.json"):
+                            try:
+                                raw = json.loads(path.read_text(encoding="utf-8"))
+                                tid = str(raw.get("id") or "") if isinstance(raw, dict) else ""
+                                if not tid:
+                                    continue
+                                if state in ("incoming", "processing", "deferred"):
+                                    live.add(tid)
+                                else:
+                                    candidate = (state, raw)
+                                    prior = terminal.get(tid)
+                                    # A successful terminal record takes precedence
+                                    # over an older error duplicate.
+                                    if prior is None or (state == "done" and prior[0] != "done"):
+                                        terminal[tid] = candidate
+                            except Exception:
+                                continue
+
         demoted: list[str] = []
+        terminal_synced: list[str] = []
         for step in plan.steps:
-            if str(step.status).upper() != "IN_PROGRESS":
-                continue
-            if is_finished(step.status):
+            if normalize_status(step.status) != "IN_PROGRESS":
                 continue
             meta = step.meta if isinstance(step.meta, dict) else {}
             task_id = str(meta.get("task_id") or "")
+            if task_id and task_id in terminal:
+                state, raw = terminal[task_id]
+                status = "DONE" if state == "done" else "ERROR"
+                result = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+                message = ""
+                if status == "DONE":
+                    # Keep the canonical Runtime completion gate authoritative:
+                    # a file in `done/` alone is not enough to mark a plan done.
+                    from core.terminal_path import verification_allows_done
+                    if not verification_allows_done(result):
+                        status = ""
+                    else:
+                        message = str(result.get("summary") or "")
+                else:
+                    message = str(result.get("error") or raw.get("error") or "")
+                if status and on_task_terminal(
+                    plan,
+                    task_id=task_id,
+                    plan_step_id=step.id,
+                    status=status,
+                    message=message,
+                ):
+                    terminal_synced.append(step.id)
+                    continue
             if task_id and task_id in live:
                 continue
             step.status = "PENDING"
@@ -109,9 +188,13 @@ class ProjectWorkflow:
             step.note = (step.note + " | " if step.note else "") + note
             demoted.append(step.id)
 
-        if demoted:
+        if demoted or terminal_synced:
             ps.save(plan)
-        return {"demoted_to_pending": demoted, "checked": len(plan.steps)}
+        return {
+            "demoted_to_pending": demoted,
+            "terminal_synced": terminal_synced,
+            "checked": len(plan.steps),
+        }
 
     def advise(self, *, limit: int = 5) -> dict[str, Any]:
         from app.agent_service import AgentService
@@ -179,6 +262,7 @@ class ProjectWorkflow:
         *,
         files: list[str] | None = None,
         source: str = "project_workflow",
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """User-confirmed enqueue via canonical task_service.submit."""
         root = self._require()
@@ -189,7 +273,7 @@ class ProjectWorkflow:
             message=message,
             project=str(root),
             files=files or [],
-            metadata={"source": source, "workflow": "fc48"},
+            metadata={"workflow": "fc48", **dict(metadata or {}), "source": source},
         )
         errs = validate_task_dict(task)
         if errs:
@@ -302,15 +386,22 @@ class ProjectWorkflow:
         if not msg:
             return {"ok": False, "error": "empty step action"}
         files = list(target.get("files") or [])
+        sid = str(target.get("id") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "plan step id missing"}
         result = self.enqueue_step(
             msg,
             files=files,
             source="project_workflow.plan_step",
+            metadata={
+                "plan_step_id": sid,
+                "plan_version": int(data.get("version") or 1),
+                "project_root": str(root),
+            },
         )
         if result.get("ok"):
-            result["step_id"] = target.get("id")
+            result["step_id"] = sid
             result["step_action"] = msg
-            sid = str(target.get("id") or "")
             if sid:
                 try:
                     from app.plan_service import PlanService

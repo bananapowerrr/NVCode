@@ -7,7 +7,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import pytest
 
 
 def _bus(tmp_path: Path):
@@ -85,33 +84,18 @@ def test_concurrent_move_claims_exactly_once(tmp_path):
     assert dst.read_text(encoding="utf-8") == '{"id": "t3"}'
 
 
-def test_desktop_missing_source_is_soft_ok(tmp_path):
-    """Desktop: задача, посеянная сразу в processing, заявляется без файла.
-
-    runtime.py:289 сеет desktop-задачу прямо в processing, поэтому при
-    заявке incoming→processing исходника нет by design. Этот soft-ok
-    обязателен, иначе такие задачи перестали бы обрабатываться.
-    """
+def test_desktop_missing_source_is_not_a_claim(tmp_path):
+    """Отсутствующий incoming источник не даёт вызывающему ownership."""
     bus = _bus(tmp_path)
     p = bus.paths("desktop")["processing"] / "t4.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("{}", encoding="utf-8")
 
-    assert bus.move("desktop", "incoming", "processing", "t4.json") is True
+    assert bus.move("desktop", "incoming", "processing", "t4.json") is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Известный долг Phase 2: desktop soft-ok отдаёт True проигравшему "
-           "гонку, поэтому на канале desktop задача может быть обработана "
-           "дважды. Нужен claim через O_CREAT|O_EXCL.",
-)
 def test_desktop_concurrent_claim_is_single(tmp_path):
-    """Честно фиксирует НЕЗАКРЫТЫЙ долг, а не маскирует его.
-
-    Пока строгий xfail, вскрытие этого долга невозможно пропустить молча:
-    как только atomic claim дойдёт до desktop, тест начнёт падать.
-    """
+    """Гонка desktop claim должна иметь ровно одного владельца."""
     bus = _bus(tmp_path)
     p = bus.paths("desktop")["incoming"] / "t5.json"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +108,7 @@ def test_desktop_concurrent_claim_is_single(tmp_path):
         results = list(ex.map(claim, range(8)))
 
     assert sum(1 for r in results if r is True) == 1, results
+    assert sum(1 for r in results if r is False) == 7, results
 
 
 # ── PREUI-002 / F2 ────────────────────────────────────────────────────

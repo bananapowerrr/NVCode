@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from app.tasks_service import TasksService
+from intelligence.living_plan import LivingPlan, LivingStep, save_living_plan
 
 
 def test_get_task_detail_unknown():
@@ -65,3 +66,39 @@ def test_list_queue_summary_shape(tmp_path: Path):
     assert "buckets" in s
     for k in ("now", "waiting", "next", "deferred", "done"):
         assert k in s["buckets"]
+
+
+def test_queue_summary_separates_running_next_and_done(tmp_path: Path):
+    plan = LivingPlan(steps=[
+        LivingStep(id="running", action="Running", status="IN_PROGRESS", meta={"task_id": "task-42"}),
+        LivingStep(id="pending", action="Next", status="PENDING"),
+        LivingStep(id="finished", action="Done", status="DONE"),
+    ])
+    save_living_plan(tmp_path, plan)
+
+    buckets = TasksService(tmp_path).list_queue_summary()["buckets"]
+
+    assert [row["id"] for row in buckets["now"]] == ["running"]
+    assert buckets["now"][0]["task_id"] == "task-42"
+    assert [row["id"] for row in buckets["next"]] == ["pending"]
+    assert [row["id"] for row in buckets["done"]] == ["finished"]
+
+
+def test_runtime_feedback_reads_nested_running_bucket_and_project_queue(tmp_path: Path):
+    task_id = "task-feedback-42"
+    plan = LivingPlan(steps=[
+        LivingStep(id="running", action="Running", status="IN_PROGRESS", meta={"task_id": task_id}),
+    ])
+    save_living_plan(tmp_path, plan)
+    queue = tmp_path / ".agentbus" / "desktop_queue"
+    queue.mkdir(parents=True)
+    (queue / f"{task_id}.json").write_text(
+        json.dumps({"id": task_id, "message": "Running", "status": "PROCESSING"}),
+        encoding="utf-8",
+    )
+
+    feedback = TasksService(tmp_path).runtime_feedback()
+
+    assert feedback["queue_running"] == 1
+    assert feedback["task_id"] == task_id
+    assert feedback["status"].lower() == "processing"

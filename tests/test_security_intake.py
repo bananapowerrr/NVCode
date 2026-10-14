@@ -44,6 +44,14 @@ def test_from_dict_security_always_on():
         )
 
 
+def test_from_dict_rejects_unsafe_task_id_even_when_not_strict():
+    with pytest.raises(SecurityError):
+        Task.from_dict(
+            {"id": "../../escaped", "message": "hello"},
+            strict=False,
+        )
+
+
 def test_from_dict_ok_relative():
     t = Task.from_dict(
         {"id": "t3", "message": "hello", "files": ["src/main.py"]},

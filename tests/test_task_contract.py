@@ -17,6 +17,13 @@ def test_normalize_minimal():
     assert t["files"] == []
 
 
+def test_task_id_must_be_a_safe_filename_token():
+    assert normalize_task({"id": "plan-2_step.a1", "message": "hello"})["id"] == "plan-2_step.a1"
+    for unsafe_id in ("../outside", "a/b", "/absolute", "C:\\outside", ".."):
+        with pytest.raises(TaskContractError, match="id"):
+            normalize_task({"id": unsafe_id, "message": "hello"})
+
+
 def test_reject_empty_message():
     with pytest.raises(TaskContractError):
         normalize_task({"id": "a1", "message": "  "})

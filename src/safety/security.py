@@ -52,6 +52,7 @@ MAX_MESSAGE_LEN = 200_000
 MAX_FILES = 200
 MAX_COMMANDS = 50
 MAX_COMMAND_LEN = 4000
+_SAFE_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def validate_path(relative: str, *, field: str = "files") -> None:
@@ -86,6 +87,18 @@ def validate_paths(files: Iterable[str] | None) -> list[str]:
         validate_path(item)
         out.append(str(item).strip())
     return out
+
+
+def validate_task_id(task_id: object) -> str:
+    """Validate an id before it is interpolated into a queue filename."""
+    value = str(task_id or "").strip()
+    if not _SAFE_TASK_ID.fullmatch(value):
+        raise SecurityError(
+            "task id must be a safe filename token",
+            field="id",
+            value=value,
+        )
+    return value
 
 
 def validate_command(cmd: str, *, field: str = "verify") -> None:
@@ -147,6 +160,8 @@ def validate_task(raw: dict | None) -> dict:
     Raises SecurityError on violation.
     """
     raw = dict(raw or {})
+    if raw.get("id") is not None:
+        raw["id"] = validate_task_id(raw["id"])
     validate_message(raw.get("message"))
     files = validate_paths(raw.get("files") or [])
     verify = validate_commands(raw.get("verify") or [], field="verify")

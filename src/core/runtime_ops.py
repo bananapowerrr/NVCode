@@ -838,6 +838,11 @@ class RuntimeOps:
                 try:
                     raw = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(raw, dict):
+                        self.log.write(f"intake reject {path.name}: task must be a JSON object")
+                        try:
+                            self.bus.move(channel, "incoming", "errors", path.name)
+                        except Exception as move_exc:
+                            self.log.write(f"intake quarantine {path.name}: {move_exc}")
                         continue
                     raw = dict(raw)
                     raw.setdefault("channel", channel)
@@ -875,8 +880,13 @@ class RuntimeOps:
 
         for path, raw, channel in ordered:
             try:
-                task = Task.from_dict(raw)
-                task.id = str(task.id or uuid.uuid4())
+                from core.intake_pipeline import IntakeError, task_from_raw
+
+                if not str(raw.get("id") or "").strip():
+                    raise IntakeError(f"intake[{channel}]: id is required for file-bus tasks")
+                task = task_from_raw(raw, source=f"filebus:{channel}", strict=True)
+                if str(task.status or "").upper() == "DONE":
+                    raise IntakeError(f"intake[{channel}]: terminal DONE task cannot be claimed")
                 task.channel = channel
                 try:
                     from core.capability_router import enrich_task_from_plugins, infer_capabilities
@@ -908,8 +918,14 @@ class RuntimeOps:
                 except Exception:
                     pass
                 return task.to_dict()
-            except (OSError, ValueError) as exc:
-                self.log.write(f"claim {getattr(path, 'name', path)}: {exc}")
+            except Exception as exc:
+                name = getattr(path, "name", str(path))
+                self.log.write(f"intake reject {name}: {type(exc).__name__}: {exc}")
+                try:
+                    if not self.bus.move(channel, "incoming", "errors", name):
+                        self.log.write(f"intake quarantine lost race: {name}")
+                except Exception as move_exc:
+                    self.log.write(f"intake quarantine {name}: {move_exc}")
                 continue
         return None
 

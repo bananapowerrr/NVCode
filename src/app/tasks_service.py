@@ -48,28 +48,31 @@ class TasksService:
             pass
 
         try:
-            from intelligence.living_plan import LivingPlan, is_active
+            from intelligence.living_plan import LivingPlan, is_active, normalize_status
             import json
             plan_path = self._root() / ".agentbus" / "living_plan.json"
             if plan_path.is_file():
                 plan = LivingPlan.from_dict(json.loads(plan_path.read_text(encoding="utf-8")))
                 for s in plan.steps or []:
-                    st = str(getattr(s, "status", "") or "").upper()
+                    st = normalize_status(getattr(s, "status", ""))
+                    meta = getattr(s, "meta", {})
+                    meta = meta if isinstance(meta, dict) else {}
                     row = {
                         "id": getattr(s, "id", ""),
+                        "task_id": str(meta.get("task_id") or ""),
                         "title": getattr(s, "action", "")[:100],
                         "kind": "plan_step",
                         "status": st,
                     }
                     if st in ("DONE", "COMPLETED"):
                         buckets["done"].append(row)
-                    elif st in ("PROCESSING", "CLAIMED", "RUNNING"):
+                    elif st in ("IN_PROGRESS", "PROCESSING", "CLAIMED", "RUNNING"):
                         buckets["now"].append(row)
                     elif st in ("BLOCKED", "WAITING"):
                         buckets["waiting"].append(row)
                     elif st in ("DEFERRED", "NIGHT"):
                         buckets["deferred"].append(row)
-                    elif is_active(s):
+                    elif is_active(st):
                         buckets["next"].append(row)
         except Exception:
             pass
@@ -136,22 +139,43 @@ class TasksService:
         tid = (task_id or "").strip()
         if not tid:
             return None
+        candidates: list[Path] = []
+        try:
+            from safety.security import validate_task_id
+            tid = validate_task_id(tid)
+        except Exception:
+            return None
+        bases: list[Path] = [self.root] if self.root else []
+        try:
+            from core.config import BUS_ROOT
+            bases.append(Path(BUS_ROOT))
+        except Exception:
+            pass
         try:
             from ui.paths import agentbus_root
-            base = agentbus_root()
+            bases.append(Path(agentbus_root()))
         except Exception:
-            base = Path.cwd()
-        candidates: list[Path] = []
-        dq = base / ".agentbus" / "desktop_queue"
-        if dq.is_dir():
-            candidates.extend(dq.glob(f"*{tid}*.json"))
-        channels = base / "channels"
-        if channels.is_dir():
-            for state in ("incoming", "processing", "deferred", "done", "errors"):
-                for f in channels.glob(f"*/{state}/*{tid}*.json"):
-                    if f.name.endswith(".lease.json"):
-                        continue
-                    candidates.append(f)
+            if not bases:
+                bases.append(Path.cwd())
+        seen_bases: set[str] = set()
+        for base in bases:
+            try:
+                key = str(base.resolve())
+            except OSError:
+                key = str(base)
+            if key in seen_bases:
+                continue
+            seen_bases.add(key)
+            dq = base / ".agentbus" / "desktop_queue"
+            if dq.is_dir():
+                candidates.extend(dq.glob(f"*{tid}*.json"))
+            channels = base / "channels"
+            if channels.is_dir():
+                for state in ("incoming", "processing", "deferred", "done", "errors"):
+                    for f in channels.glob(f"*/{state}/*{tid}*.json"):
+                        if f.name.endswith(".lease.json"):
+                            continue
+                        candidates.append(f)
         # exact id match preferred
         for f in candidates:
             try:
@@ -289,14 +313,17 @@ class TasksService:
         # queue headline
         try:
             q = self.list_queue_summary()
-            running = q.get("running") or q.get("processing") or []
+            buckets = q.get("buckets") if isinstance(q.get("buckets"), dict) else {}
+            running = buckets.get("now") or []
             if isinstance(running, int):
                 out["queue_running"] = running
             elif isinstance(running, list) and running:
                 out["queue_running"] = len(running)
                 if not task_id and isinstance(running[0], dict):
-                    task_id = str(running[0].get("id") or running[0].get("task_id") or "")
+                    task_id = str(running[0].get("task_id") or "")
                     out["task_id"] = task_id
+                if not task_id:
+                    out["status"] = "processing"
             else:
                 out["queue_running"] = 0
         except Exception:
@@ -346,4 +373,3 @@ class TasksService:
         if f.get("detail"):
             parts.append(str(f["detail"])[:120])
         return " | ".join(parts)
-

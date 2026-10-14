@@ -176,7 +176,6 @@ class RPLifecycleMixin:
         """
         try:
             from skills.task_decomposer import GLOBAL_DECOMPOSER
-            from core.config import BUS_ROOT
             force_capacity = False
             try:
                 from core.router import needs_capacity_shard
@@ -201,16 +200,19 @@ class RPLifecycleMixin:
                     tid = str(raw.get("id") or "")
                     ch = str(raw.get("channel") or "gpt")
                     if tid:
-                        self.bus.move(ch, "processing", "deferred", f"{tid}.json")
-                        from pathlib import Path
-                        import json
-                        from core.config import BUS_ROOT
-                        path = Path(BUS_ROOT) / "channels" / ch / "deferred" / f"{tid}.json"
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        payload = dict(raw)
-                        payload["status"] = "DEFERRED"
-                        payload["error"] = "WAITING_FOR_CAPACITY"
-                        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                        if self.bus.move(ch, "processing", "deferred", f"{tid}.json"):
+                            import json
+                            payload = dict(raw)
+                            payload["status"] = "DEFERRED"
+                            payload["error"] = "WAITING_FOR_CAPACITY"
+                            self.bus.write(
+                                ch,
+                                "deferred",
+                                f"{tid}.json",
+                                json.dumps(payload, ensure_ascii=False, indent=2),
+                            )
+                        else:
+                            self.log.write(f"defer lost claim: {tid}")
                 except Exception:
                     pass
                 return "DEFERRED"
@@ -579,4 +581,3 @@ class RPLifecycleMixin:
     # ------------------------------------------------------------------
     # Solution cache
     # ------------------------------------------------------------------
-

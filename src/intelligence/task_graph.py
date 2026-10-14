@@ -152,14 +152,19 @@ def emit_ready_to_bus(
 ) -> list[str]:
     """Write READY nodes as incoming JSON tasks. Returns task ids emitted."""
     from pathlib import Path as P
+    from core.bus import FileBus
+
     root = P(bus_root) if bus_root else P(".")
-    incoming = root / "channels" / channel / "incoming"
-    incoming.mkdir(parents=True, exist_ok=True)
+    bus = FileBus(root, (channel,))
     emitted: list[str] = []
     for node in graph.ready()[:max_emit]:
         payload = node.to_task_dict(parent_id=parent_id, channel=channel, project=project)
-        path = incoming / f"{node.id}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        bus.write(
+            channel,
+            "incoming",
+            f"{node.id}.json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
         node.status = "PENDING"  # in queue; graph tracks via mark when done
         # keep READY→emitted as processing marker in meta
         node.meta["emitted"] = True

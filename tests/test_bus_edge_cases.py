@@ -4,7 +4,7 @@
 Покрывает то, чего нет в test_bus_types.py и test_e2e_filebus.py:
   * атомарность move при гонке N потоков на одном файле (ровно один True);
   * move несуществующего файла / в ещё не созданный каталог;
-  * desktop-канал: soft-ok, когда dst есть (задокументированный долг Phase 2);
+  * desktop-канал: отсутствие src всегда означает проигранный claim;
   * write: пустая строка, не-ASCII, битый Unicode (surrogate), не-текст,
     вложенный путь, отсутствие каталога, коллизия .tmp;
   * write в read-only каталог и обработка ошибок ФС;
@@ -57,6 +57,11 @@ def test_paths_none_channel_raises_value_error(bus):
 def test_paths_empty_channel_raises_value_error(bus):
     with pytest.raises(ValueError):
         bus.paths("")
+
+
+def test_paths_rejects_traversal_channel(bus):
+    with pytest.raises(ValueError):
+        bus.paths("gpt__sub_../../outside")
 
 
 def test_paths_channel_with_whitespace_is_stripped(bus):
@@ -263,16 +268,11 @@ def test_move_same_state_to_itself_is_noop_but_claims(bus):
     assert (_state_dir(bus, "gpt", "incoming") / "t.json").is_file()
 
 
-def test_move_desktop_soft_ok_when_destination_exists(bus):
-    """Канал desktop: нет src, но есть dst -> True (задокументированный долг).
-
-    Известная проблема Phase 2: этот soft-ok неотличим от проигранной гонки,
-    поэтому desktop защищён claim через O_CREAT|O_EXCL, а не rename.
-    """
+def test_move_desktop_missing_source_does_not_claim_existing_destination(bus):
+    """Отсутствие источника всегда означает, что этот вызов не забрал задачу."""
     bus.write("desktop", "incoming", "t.json", "{}")
     assert bus.move("desktop", "incoming", "processing", "t.json") is True
-    # второй вызов: src нет, dst есть -> soft-ok True (может дать двойную обработку)
-    assert bus.move("desktop", "incoming", "processing", "t.json") is True
+    assert bus.move("desktop", "incoming", "processing", "t.json") is False
 
 
 def test_move_normal_channel_missing_src_does_not_soft_ok(bus):
@@ -315,6 +315,18 @@ def test_write_nested_relative_filename_creates_subdirs(bus):
     assert p.is_file()
 
 
+@pytest.mark.parametrize("filename", ["../escape.json", "/tmp/escape.json", "a/../../escape.json", "a\\..\\escape.json"])
+def test_write_rejects_filename_traversal(bus, tmp_path, filename):
+    with pytest.raises(ValueError, match="unsafe bus filename"):
+        bus.write("gpt", "incoming", filename, "{}")
+    assert not (tmp_path.parent / "escape.json").exists()
+
+
+def test_move_rejects_filename_traversal(bus):
+    with pytest.raises(ValueError, match="unsafe bus filename"):
+        bus.move("gpt", "incoming", "processing", "../escape.json")
+
+
 def test_write_unicode_payload_roundtrip_utf8(bus):
     """Кириллица/эмодзи должны выжить round-trip без потерь."""
     text = '{"message":"почини парсер 🛠","files":[]}'
@@ -341,9 +353,9 @@ def test_write_non_text_payload_raises_typeerror(bus):
         bus.write("gpt", "incoming", "none.json", None)  # type: ignore[arg-type]
 
 
-def test_write_empty_filename_raises_oserror(bus):
-    """Пустое имя: with_suffix('.tmp') уезжает на сам каталог состояния."""
-    with pytest.raises(OSError):
+def test_write_empty_filename_raises_valueerror(bus):
+    """Пустое имя отклоняется до построения filesystem path."""
+    with pytest.raises(ValueError, match="unsafe bus filename"):
         bus.write("gpt", "incoming", "", "{}")
 
 

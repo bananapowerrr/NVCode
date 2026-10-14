@@ -158,12 +158,14 @@ def sync_plan_to_queue(
         if use_filebus:
             try:
                 root = Path(bus_root or project_root or ".")
-                incoming = root / "channels" / filebus_channel / "incoming"
-                incoming.mkdir(parents=True, exist_ok=True)
+                from core.bus import FileBus
+
                 fb_id = payload["id"]
-                (incoming / f"{fb_id}.json").write_text(
+                FileBus(root, (filebus_channel,)).write(
+                    filebus_channel,
+                    "incoming",
+                    f"{fb_id}.json",
                     json.dumps(payload, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
                 )
                 tid = tid or fb_id
             except Exception as exp:

@@ -151,8 +151,8 @@ class SubAgent:
         child_depth = depth + 1
         child_ch = self._child_channel(parent_id)
         self._ensure_channel_tree(child_ch)
-        incoming = self.bus_root / "channels" / child_ch / "incoming"
-        incoming.mkdir(parents=True, exist_ok=True)
+        from core.bus import FileBus
+        bus = FileBus(self.bus_root, (self.channel,))
         ids: list[str] = []
         cap = min(
             ABSOLUTE_MAX_CHILDREN,
@@ -185,10 +185,11 @@ class SubAgent:
                     "max_depth": MAX_DEPTH,
                 },
             }
-            path = incoming / f"{tid}.json"
-            path.write_text(
+            bus.write(
+                child_ch,
+                "incoming",
+                f"{tid}.json",
                 json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
             ids.append(tid)
         # registry for progress tracking
@@ -293,8 +294,8 @@ class SubAgent:
         """
         ids = list(task_ids or self.load_registry(parent_id))
         cancelled: list[str] = []
-        errors_dir = self._channel_dir("errors")
-        errors_dir.mkdir(parents=True, exist_ok=True)
+        from core.bus import FileBus
+        bus = FileBus(self.bus_root, (self.channel,))
         for tid in ids:
             found = self._find_task_file(tid)
             if not found:
@@ -303,21 +304,29 @@ class SubAgent:
             if state not in ("incoming", "pending", "deferred"):
                 continue
             try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {"id": tid}
-            raw["status"] = "CANCELLED"
-            raw["error"] = "CANCELLED_BY_PARENT"
-            meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-            meta["cancelled_at"] = time.time()
-            meta["parent_id"] = parent_id
-            raw["metadata"] = meta
-            dest = errors_dir / f"{tid}.json"
-            try:
-                dest.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-                path.unlink(missing_ok=True)
+                channel = path.parent.parent.name
+                source_state = "incoming" if state == "pending" else state
+                if not bus.move(channel, source_state, "errors", path.name):
+                    continue
+                dest = bus.paths(channel)["errors"] / path.name
+                try:
+                    raw = json.loads(dest.read_text(encoding="utf-8"))
+                except Exception:
+                    raw = {"id": tid}
+                raw["status"] = "CANCELLED"
+                raw["error"] = "CANCELLED_BY_PARENT"
+                meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                meta["cancelled_at"] = time.time()
+                meta["parent_id"] = parent_id
+                raw["metadata"] = meta
+                bus.write(
+                    channel,
+                    "errors",
+                    path.name,
+                    json.dumps(raw, ensure_ascii=False, indent=2),
+                )
                 cancelled.append(tid)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning("cancel %s: %s", tid, exc)
         return cancelled
 
