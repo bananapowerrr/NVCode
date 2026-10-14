@@ -10,7 +10,8 @@ This index is the entry point for current documentation. Check source code and c
 4. [Live runbook](LIVE_RUNBOOK.md) — machine-level checks and troubleshooting workflow.
 5. [Product status](PRODUCT_STATUS.md) — current status snapshot; validate it before release decisions.
 6. [Cleanup report](CLEANUP_REPORT.md) — verified cleanup findings and follow-up actions.
-7. [Technical debt registry](TECHNICAL_DEBT_REGISTRY.md) — candidates that still need confirmation or remediation.
+7. [NVCode rebrand plan](NVCODE_REBRAND_PLAN.md) — migration status, compatibility policy, and remaining work.
+8. [Technical debt registry](TECHNICAL_DEBT_REGISTRY.md) — candidates that still need confirmation or remediation.
 
 ## Reference
 
