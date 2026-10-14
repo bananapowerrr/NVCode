@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AgentBus external updater (UPDATE-001D/E).
+"""NVCode external updater (UPDATE-001D/E).
 
 Separate process. Stages:
   dry-run        → validate job
@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 def _log(msg: str) -> None:
-    print(f"[agentbus-updater] {msg}", flush=True)
+    print(f"[nvcode-updater] {msg}", flush=True)
 
 
 def load_job(path: Path) -> dict:
@@ -33,7 +33,7 @@ def load_job(path: Path) -> dict:
 def download(url: str, dest: Path, timeout: float = 120.0) -> None:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "AgentBus-Updater/0.10"},
+        headers={"User-Agent": "NVCode-Updater/0.10"},
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp, dest.open("wb") as out:
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     install = Path(str(job["install_dir"]))
-    backup = Path(str(job.get("backup_dir") or (install / ".agentbus_backup")))
+    backup = Path(str(job.get("backup_dir") or (install / ".nvcode_backup")))
     user_data = Path(str(job["user_data_dir"])) if job.get("user_data_dir") else None
     restart_cmd = job.get("restart_cmd") if isinstance(job.get("restart_cmd"), list) else None
 
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         _log("need --dry-run | --download-only | --apply")
         return 3
 
-    tmp = Path(tempfile.mkdtemp(prefix="agentbus_upd_"))
+    tmp = Path(tempfile.mkdtemp(prefix="nvcode_upd_"))
     pkg = tmp / "package.bin"
     try:
         _log(f"download {job['package_url']}")
