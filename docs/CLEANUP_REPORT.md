@@ -1,74 +1,52 @@
-# Cleanup Report
+# NVCode cleanup and documentation audit
 
-## Дата: 2026-10-08
-## Всего файлов в репозитории: 777
-## Мусор: 25 файлов
+> Audit basis: GitHub `main` tree inspected on 2026-10-15. This is a static repository inspection. No local test suite or live runtime was run as part of this snapshot.
 
-## К удалению (DELETE)
-| Файл | Причина | Размер |
-|------|---------|--------|
-| `test_cache_1.py` | Тест в корне репозитория, не в `tests/`. Содержит только `def hello(): return 'world'` | 34 B |
-| `Modelfile-t-lite` | Ollama Modelfile, не относится к проекту | 138 B |
-| `.agentbus/desktop.ini` | Windows OS мусор | 352 B |
-| `.agentbus/sessions/desktop.ini` | Windows OS мусор | 352 B |
-| `.agentbus/desktop_queue/desktop.ini` | Windows OS мусор | 352 B |
-| `.agentbus/uploads/desktop.ini` | Windows OS мусор | 352 B |
-| `.agentbus/uploads/att1/desktop.ini` | Windows OS мусор | 352 B |
-| `src/core/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `src/intelligence/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `src/safety/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `src/skills/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `src/skills/builtin/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `src/utils/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `providers/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `plugins/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `eventbus/__pycache__/desktop.ini` | Windows OS мусор в исходниках | 352 B |
-| `scripts/__pycache__/` | Python cache (9 директорий) | -- |
-| `src/core/__pycache__/` | Python cache | -- |
-| `src/intelligence/__pycache__/` | Python cache | -- |
-| `src/safety/__pycache__/` | Python cache | -- |
-| `src/skills/__pycache__/` | Python cache | -- |
-| `src/utils/__pycache__/` | Python cache | -- |
-| `providers/__pycache__/` | Python cache | -- |
-| `plugins/__pycache__/` | Python cache | -- |
-| `eventbus/__pycache__/` | Python cache | -- |
+## Confirmed repository facts
 
-## К переносу (MOVE)
-| Файл | Куда | Причина |
-|------|------|--------|
-| `.opencode/` | `~/.config/opencode/` или `.gitignore` | 3,938 файлов node_modules, 12.7 MB |
-| `.kilo/` | `.gitignore` или удалить | Kilo agent worktrees |
-| `events/2026-10-08.jsonl` | `logs/` или `.gitignore` | Runtime event log |
-| `docs/rp_llm_meta_decompose.diff.txt` | `patches/` или git history | Diff файл не место в docs/ |
+- Inspected tree: 786 entries, including directories.
+- Python files under `src/`: 229.
+- Python test files under `tests/`: 315.
+- Root-level Python entry files: `admin_ui.py`, `dispatcher.py`, `dispatcher_ui.py`, and `hello.py`.
+- `hello.py` is a tiny standalone hello-world script and appears unrelated to the product. Check references and CI before deleting it.
+- `docs/rp_llm_meta_decompose.diff.txt` is a patch artifact inside the documentation tree. Decide whether it is needed as a reproducible patch; if retained, move it under an explicitly named archive/patches area.
+- No tracked `desktop.ini`, `__pycache__`, `.pyc`, `node_modules`, `test_cache_1.py`, or `Modelfile-t-lite` entries were found in the inspected tree. Older reports listing them are stale for this tree.
+- Several Python basenames repeat in separate packages. Duplicate basenames are not proof of duplicate implementations; compare imports, call sites, and tests before consolidating.
 
-## К обсуждению (REVIEW)
-| Файл | Вопрос |
-|------|--------|
-| `docs/SYNC_SCRIPT_AUDIT.md` | Содержит аудит внешнего скрипта `D:\Workspace\mirror-to-drive.ps1`, которого нет в репозитории. Галлюцинации? |
-| `docs/AUDIT_2026-09-22.md` | Старый аудит (1+ месяц). Актуален? |
-| `docs/PCGAP_PRODUCT_INTEGRATION_AUDIT.md` | Аудит с git-хэшами. Актуален после синхронизации? |
-| `docs/DAY21_PRODUCT_READINESS_AUDIT.md` | Большой аудит с gap matrix. Актуален? |
-| `docs/release.json` | Автогенериемый метаданные релиза. Нужен в репозитории? |
-| `docs/release.example.json` | Пример метаданных релиза. Оставить? |
-| `tests/ui.yaml` | Конфиг в папке tests/. На месте ли? |
+## Documentation defects confirmed
 
-## Что оставить (KEEP)
-- `src/` — весь исходный код проекта
-- `tests/` — все тесты (220+ файлов), skip/xfail с объяснениями
-- `docs/` — документация, архивы, шаблоны
-- `config/` — конфигурационные файлы
-- `scripts/` — скрипты проекта
-- `ui/` — интерфейс
-- `providers/`, `plugins/`, `eventbus/`, `recipes/`, `examples/` — модули проекта
-- `AGENTS.md`, `README.md`, `pyproject.toml`, `requirements*.txt`, `pytest.ini` — базовые файлы
-- `.github/` — CI/CD конфигурация
-- `.gitignore` — добавить `.opencode/`
+1. `README.md` linked to missing `docs/LAUNCH.md`.
+2. `AGENTS.md` referenced missing `docs/AUDIT_MAIN_0.10.md` and `docs/FINISH_5DAYS.md`.
+3. `docs/INDEX.md` directed contributors to Drive synchronization and historical freeze documents as the primary workflow.
+4. `docs/README.md` duplicates the root README and contains root-relative links that are incorrect from its location.
+5. `docs/CLEANUP_REPORT.md` previously listed stale artifacts and an old file count.
+6. `docs/SYNC_PUSH_LIST.md` described files as missing from `main`, although the 14 listed paths checked during this audit were present.
+7. `docs/archive/README.md` points to architecture inventory documents that were not present in the inspected tree.
+8. `docs/STRUCTURE.md` mixed repository paths with runtime-created directories and described old freeze assumptions.
 
-## Приоритетные действия
-1. Добавить `.opencode/` в `.gitignore` — 12.7 MB node_modules
-2. Удалить `test_cache_1.py` — мусор в корне
-3. Удалить `Modelfile-t-lite` — не относится к проекту
-4. Проверить `SYNC_SCRIPT_AUDIT.md` — возможные галлюцинации
-5. Перенести `rp_llm_meta_decompose.diff.txt` из `docs/`
-6. Очистить `desktop.ini` из исходников (13 файлов)
-7. Очистить `__pycache__` из исходников (9 директорий)
+## Current cleanup candidates
+
+| Candidate | Evidence | Safe next action |
+|---|---|---|
+| `hello.py` | Root-level hello-world script | Search all references and CI before deletion |
+| `docs/rp_llm_meta_decompose.diff.txt` | Patch artifact in docs | Check whether patch is applied, useful, or duplicated in Git history |
+| `docs/README.md` | Duplicates root README | Replace with a short redirect/index or remove after checking inbound links |
+| Drive sync docs | No longer current workflow | Preserve as historical context in archive, remove from current index |
+| Old day/audit reports | Snapshot documents with date-bound claims | Archive rather than delete until unique technical evidence is extracted |
+
+## Current naming migration
+
+The product name is **NVCode**. Legacy names still appear in package metadata, console-script names, UI titles, environment variables, updater/package filenames, and local runtime data paths. These must be migrated by subsystem with compatibility tests; blind global replacement could break existing installations or lose access to user data.
+
+## Recommended order
+
+1. Finish a reference scan for each deletion candidate.
+2. Remove stale source-of-truth and freeze instructions from the active documentation path.
+3. Consolidate current documentation around `docs/INDEX.md`.
+4. Inventory and implement the NVCode identity migration across package metadata, CLI entry points, UI strings, build outputs, updater, and environment variables.
+5. Run link checks, unit/integration tests, CI, and packaging checks.
+6. Re-run this audit and record exact test evidence before merging.
+
+## Verification status
+
+This report records static inspection only. It does not claim that tests, CI, packaging, or live workers passed.
