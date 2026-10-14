@@ -1,4 +1,4 @@
-﻿# AgentBus roadmap (current)
+﻿# NVCode roadmap
 
 ## Runtime engineering
 
@@ -25,14 +25,14 @@
 ### Update principles
 
 1. **App does not replace itself while running** — external updater.
-2. **User data never in the install package path** (`%APPDATA%/AgentBus/` stays).
+2. **User data never in the install package path** (`%APPDATA%/NVCode/` is the target for new installs; migration of existing user data must be explicit).
 3. **Fail-closed manifest**: missing sha256 / invalid JSON → no update offer.
 4. **Git is for developers**; Releases + UpdateChecker are for users.
 
 ### Target UX
 
 ```
-UpdateChecker → "AgentBus 0.10.1 available" → [Update] [Later]
+UpdateChecker → "NVCode update available" → [Update] [Later]
   → download + verify → updater stops app → replace binaries → restart
   → failed start → rollback
 ```
