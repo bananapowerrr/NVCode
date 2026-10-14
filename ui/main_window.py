@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Главное окно AgentBus UI."""
+"""Главное окно NVCode."""
 from __future__ import annotations
 
 import customtkinter as ctk
@@ -2338,7 +2338,7 @@ class MainWindow(ctk.CTk):
             self._settings_win.focus()
             return
         win = ctk.CTkToplevel(self)
-        win.title("Настройки AgentBus")
+        win.title("Настройки NVCode")
         win.geometry("780x620")
         SettingsPanel(win).pack(fill="both", expand=True)
         self._settings_win = win
