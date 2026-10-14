@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
 """Desktop primary task queue (in-process + optional spill file).
 
 Chat UI is the main channel. File-bus (channels/) is optional for phone/remote.
@@ -94,25 +94,45 @@ class LocalQueue:
             # recover spill (UI process → dispatcher process)
             if self._spill is not None and self._spill.is_dir():
                 files = sorted(
-                    self._spill.glob("*.json"),
+                    (
+                        p for p in self._spill.glob("*.json")
+                        if not p.name.endswith(".claiming.json")
+                        and not p.name.endswith(".tmp")
+                    ),
                     key=lambda p: p.stat().st_mtime,
                 )
                 for path in files:
+                    # TD-026: claim by atomic rename first, then read.
+                    # Two processes cannot both rename the same file.
+                    claimed = path.with_name(path.stem + ".claiming.json")
                     try:
-                        data = json.loads(path.read_text(encoding="utf-8"))
-                        path.unlink(missing_ok=True)
+                        path.replace(claimed)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exp:
+                        try:
+                            import logging
+                            logging.getLogger("agentbus.queue").warning(
+                                "spill claim rename %s: %s", path.name, exp
+                            )
+                        except Exception:
+                            pass
+                        continue
+                    try:
+                        data = json.loads(claimed.read_text(encoding="utf-8"))
+                        claimed.unlink(missing_ok=True)
                         if isinstance(data, dict):
                             return data
                     except Exception as exp:
                         try:
                             import logging
                             logging.getLogger("agentbus.queue").warning(
-                                "spill claim skip %s: %s", path.name, exp
+                                "spill claim skip %s: %s", claimed.name, exp
                             )
                         except Exception:
                             pass
                         try:
-                            path.unlink(missing_ok=True)
+                            claimed.unlink(missing_ok=True)
                         except OSError:
                             pass
             return None
@@ -121,7 +141,11 @@ class LocalQueue:
         with self._lock:
             n = len(self._q)
             if self._spill is not None and self._spill.is_dir():
-                n += len(list(self._spill.glob("*.json")))
+                n += sum(
+                    1 for p in self._spill.glob("*.json")
+                    if not p.name.endswith(".claiming.json")
+                    and not p.name.endswith(".tmp")
+                )
             return n
 
 
