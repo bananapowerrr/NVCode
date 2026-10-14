@@ -148,7 +148,7 @@ class MainWindow(ctk.CTk):
         brand.pack(fill="x", padx=10, pady=(12, 4))
         ctk.CTkLabel(
             brand,
-            text="AgentBus",
+            text="NVCode",
             font=ctk.CTkFont(size=18, weight="bold"),
             anchor="w",
         ).pack(fill="x")
@@ -1930,7 +1930,7 @@ class MainWindow(ctk.CTk):
         except Exception:
             pass
         if self._toast:
-            notify(_t("toast_done", default="AgentBus · DONE"), detail or task_id or "задача выполнена", dedupe_key=f"done:{task_id}")
+            notify(_t("toast_done", default="NVCode · DONE"), detail or task_id or "задача выполнена", dedupe_key=f"done:{task_id}")
         self._sync_after_task(task_id)
         try:
             self._sync_plan_step_for_task(task_id, status="DONE")
@@ -1958,7 +1958,7 @@ class MainWindow(ctk.CTk):
         except Exception:
             pass
         if self._toast:
-            notify(_t("toast_error", default="AgentBus · ERROR"), detail or task_id or "ошибка", dedupe_key=f"err:{task_id}")
+            notify(_t("toast_error", default="NVCode · ERROR"), detail or task_id or "ошибка", dedupe_key=f"err:{task_id}")
         try:
             self.history.refresh()
         except Exception:
