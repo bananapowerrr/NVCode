@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         files = [marker]
         build_zip(files, out, zip_path, prefix=f"NVCode-{version}")
     else:
-        build_zip(files, root, zip_path, prefix=f"AgentBus-{version}")
+        build_zip(files, root, zip_path, prefix=f"NVCode-{version}")
 
     digest = sha256_file(zip_path)
     size = zip_path.stat().st_size
