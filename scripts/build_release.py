@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""UPDATE-001F: build AgentBus release package + release.json manifest.
+"""UPDATE-001F: build NVCode release package + release.json manifest.
 
 Usage:
   python scripts/build_release.py --version 0.10.1 --out dist/
 
 Creates:
-  dist/AgentBus-<version>-src.zip   (source/app tree for now)
+  dist/NVCode-<version>-src.zip   (source/app tree for now)
   dist/release.json                 (manifest for UpdateChecker)
 
 Does not publish to GitHub — CI workflow does that on tag push.
@@ -115,11 +115,11 @@ def write_manifest(
     notes: str,
 ) -> dict:
     manifest = {
-        "app": "AgentBus",
+        "app": "NVCode",
         "version": version,
         "channel": channel,
         "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "notes": notes or f"AgentBus {version}",
+        "notes": notes or f"NVCode {version}",
         "min_updater": "1.0.0",
         "package": {
             "url": package_url,
