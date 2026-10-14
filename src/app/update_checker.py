@@ -175,7 +175,7 @@ def format_update_notice(check: dict[str, Any] | None) -> str:
         return ""
     latest = c.get("latest") or "?"
     notes = str(c.get("notes") or "").strip()
-    lines = [f"Доступна новая версия AgentBus {latest}"]
+    lines = [f"Доступна новая версия NVCode {latest}"]
     if notes:
         lines.append(notes[:300])
     lines.append("[Обновить] [Позже]  — установка через внешний updater (UPDATE-001D)")
