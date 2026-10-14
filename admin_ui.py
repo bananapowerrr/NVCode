@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AgentBus Admin UI — feature flags / optional modules (separate from dispatcher_ui)."""
+"""NVCode Admin UI — feature flags / optional modules (separate from dispatcher_ui)."""
 from __future__ import annotations
 
 import sys
