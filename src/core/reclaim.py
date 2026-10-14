@@ -5,6 +5,7 @@ Improves existing mtime-based recovery:
 - adaptive stuck timeout from complexity, worker, PEV
 - optional last_heartbeat in task metadata / sidecar lease
 - attempts → requeue incoming or terminal errors
+- TD-006: touch_lease CAS — only the owning worker may refresh the lease
 
 Does NOT replace loopguard (live but spinning worker).
 """
@@ -35,6 +36,30 @@ def _soft_log(where: str, err: BaseException) -> None:
             sys.stderr.write(f"[agentbus.reclaim] {where}: {type(err).__name__}: {err}\n")
         except Exception:
             pass
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> bool:
+    """tmp + os.replace; never leave a partial task/lease JSON."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return True
+    except OSError as e:
+        _soft_log(f"atomic_write:{path.name}", e)
+        try:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            if tmp.is_file():
+                tmp.unlink()
+        except OSError:
+            pass
+        return False
+
 
 _COMPLEXITY_FACTOR: dict[int, float] = {
     1: 1.0,
@@ -83,7 +108,6 @@ def task_complexity(raw: dict[str, Any] | None) -> int:
                 c = _as_int(src.get(key), 0)
                 if 1 <= c <= 5:
                     return c
-    # light heuristic from message length / files
     files = raw.get("files") or meta.get("files") or []
     n_files = len(files) if isinstance(files, list) else 0
     msg = str(raw.get("message") or "")
@@ -127,7 +151,6 @@ def compute_stuck_timeout_sec(
         )
     except Exception:
         pass
-    # Legacy fallback if policy import fails
     base = float(base_sec if base_sec is not None else BASE_STUCK_SEC)
     cap = float(max_sec if max_sec is not None else STUCK_TIMEOUT_MAX)
     raw = raw if isinstance(raw, dict) else {}
@@ -162,7 +185,6 @@ def last_active_epoch(path: Path, raw: dict[str, Any] | None = None) -> float:
             for src in (meta, raw):
                 if key in src:
                     candidates.append(_as_float(src.get(key), 0.0))
-        # ISO updated_at — ignore if parse fails
         updated = meta.get("updated_at")
         if isinstance(updated, str) and len(updated) >= 19:
             try:
@@ -173,7 +195,6 @@ def last_active_epoch(path: Path, raw: dict[str, Any] | None = None) -> float:
                 _soft_log("parse_updated_at", e)
 
     lease = path.with_suffix(path.suffix + ".lease") if path.suffix else path.with_name(path.name + ".lease")
-    # prefer sibling <id>.lease.json
     lease_json = path.with_name(path.stem + ".lease.json")
     for lf in (lease_json, lease):
         if not lf.is_file():
@@ -200,7 +221,10 @@ def write_lease(
     stuck_timeout_sec: float = 0.0,
     phase: str = "claim",
 ) -> Path | None:
-    """Write/update sidecar lease next to processing task JSON."""
+    """Write/update sidecar lease next to processing task JSON.
+
+    Claim path: always overwrites (this worker is taking ownership).
+    """
     lease_path = processing_path.with_name(processing_path.stem + ".lease.json")
     now = time.time()
     payload = {
@@ -214,22 +238,27 @@ def write_lease(
         ),
         "phase": phase,
     }
+    if _atomic_write_json(lease_path, payload):
+        return lease_path
     try:
-        tmp = lease_path.with_suffix(lease_path.suffix + ".tmp")
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, lease_path)
+        lease_path.touch()
         return lease_path
     except OSError:
-        try:
-            lease_path.touch()
-            return lease_path
-        except OSError:
-            return None
+        return None
 
 
-def touch_lease(processing_path: Path, phase: str | None = None) -> None:
-    """Refresh heartbeat without rewriting full task body."""
+def touch_lease(
+    processing_path: Path,
+    phase: str | None = None,
+    *,
+    expected_worker_id: str | None = None,
+) -> bool:
+    """Refresh heartbeat without rewriting full task body.
+
+    TD-006 CAS: if *expected_worker_id* is set and the lease already names a
+    different non-empty worker_id, refuse to touch (another owner holds it).
+    Returns True if the lease was updated (or created empty).
+    """
     lease_path = processing_path.with_name(processing_path.stem + ".lease.json")
     now = time.time()
     data: dict[str, Any] = {}
@@ -241,18 +270,30 @@ def touch_lease(processing_path: Path, phase: str | None = None) -> None:
         except Exception as e:
             _soft_log("touch_lease_read", e)
             data = {}
+
+    if expected_worker_id is not None:
+        owner = str(data.get("worker_id") or "").strip()
+        want = str(expected_worker_id or "").strip()
+        if owner and want and owner != want:
+            _soft_log(
+                "touch_lease_cas",
+                RuntimeError(f"lease owner={owner!r} != expected={want!r}"),
+            )
+            return False
+
     data["last_heartbeat"] = now
     if phase:
         data["phase"] = phase
+    if expected_worker_id and not str(data.get("worker_id") or "").strip():
+        data["worker_id"] = str(expected_worker_id)
+
+    if _atomic_write_json(lease_path, data):
+        return True
     try:
-        tmp = lease_path.with_suffix(lease_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, lease_path)
+        processing_path.touch()
+        return True
     except OSError:
-        try:
-            processing_path.touch()
-        except OSError:
-            pass
+        return False
 
 
 def _attach_failure_evidence(
@@ -261,11 +302,7 @@ def _attach_failure_evidence(
     reclaim_reason: str,
     state_folder: str,
 ) -> None:
-    """Record failure_layer / recoverable / execution_evidence on a reclaimed task.
-
-    Without this the recovery layer cannot tell a stuck-task termination from a
-    worker or verification failure, and decide_from_task_row sees no layer.
-    """
+    """Record failure_layer / recoverable / execution_evidence on a reclaimed task."""
     try:
         from core.execution_evidence import classify_failure_layer
 
@@ -305,7 +342,7 @@ def reclaim_stuck(
     """Scan processing/ and requeue or error stuck tasks.
 
     Prefer bus_move(channel, from, to, filename) when provided (AgentBus FileBus).
-    Else move_fn is unused; falls back to Path.replace.
+    Else falls back to Path.replace.
     """
     results: list[dict[str, Any]] = []
     if not processing_dir.is_dir():
@@ -315,14 +352,10 @@ def reclaim_stuck(
     incoming_dir.mkdir(parents=True, exist_ok=True)
     errors_dir.mkdir(parents=True, exist_ok=True)
 
-    # Осиротевшие lease: task-JSON уже ушёл (в errors/terminal), а sidecar
-    # остался. Раньше цикл ниже их пропускал (continue по .lease.json), и
-    # такой файл висел в processing/ бесконечно — он же блокировал повторный
-    # claim задачи и путал status_board.
     for lease_path in list(processing_dir.glob("*.lease.json")):
         task_path = lease_path.with_name(lease_path.name[: -len(".lease.json")] + ".json")
         if task_path.is_file():
-            continue  # у lease есть хозяин — разберётся основной проход
+            continue
         try:
             lease_path.unlink()
         except OSError as e:
@@ -373,10 +406,9 @@ def reclaim_stuck(
         dest_state = "errors" if to_errors else "incoming"
         action = "ERROR" if to_errors else "REQUEUE"
 
-        # bump attempts on requeue
         if raw is not None and not to_errors:
             raw["attempts"] = attempts + 1
-            raw["status"] = "PENDING"  # back to queue; claim will CLAIM again
+            raw["status"] = "PENDING"
             meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
             meta = dict(meta)
             meta["attempts"] = raw["attempts"]
@@ -386,10 +418,8 @@ def reclaim_stuck(
             meta["last_heartbeat"] = ts
             _attach_failure_evidence(raw, meta, "stuck_no_heartbeat", "incoming")
             raw["metadata"] = meta
-            try:
-                path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-            except OSError as e:
-                _soft_log(f"write_requeue:{path.name}", e)
+            if not _atomic_write_json(path, raw):
+                _soft_log(f"write_requeue:{path.name}", OSError("atomic write failed"))
 
         if to_errors and raw is not None:
             meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
@@ -399,10 +429,8 @@ def reclaim_stuck(
             raw["status"] = "ERROR"
             _attach_failure_evidence(raw, meta, "stuck_max_attempts", "errors")
             raw["metadata"] = meta
-            try:
-                path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-            except OSError as e:
-                _soft_log(f"write_error:{path.name}", e)
+            if not _atomic_write_json(path, raw):
+                _soft_log(f"write_error:{path.name}", OSError("atomic write failed"))
 
         moved = False
         if bus_move and channel:
