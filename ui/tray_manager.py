@@ -34,10 +34,10 @@ def start_tray(*, on_show: Callable[[], None], on_quit: Callable[[], None]) -> b
         on_quit()
 
     menu = pystray.Menu(
-        pystray.MenuItem("Показать AgentBus", show, default=True),
+        pystray.MenuItem("Показать NVCode", show, default=True),
         pystray.MenuItem("Выход", quit_app),
     )
-    icon = pystray.Icon("AgentBus", _icon_image(), "AgentBus", menu)
+    icon = pystray.Icon("NVCode", _icon_image(), "NVCode", menu)
     state["icon"] = icon
     try:
         icon.run_detached()
