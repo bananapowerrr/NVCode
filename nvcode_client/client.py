@@ -28,6 +28,16 @@ class HttpRestAdapter:
             raise ValueError("Protocol v0 REST response must be a JSON object")
         return data
 
+    def post(self, path: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        payload = json.dumps(dict(body), ensure_ascii=False).encode("utf-8")
+        request = Request(self.base_url + "/" + path.lstrip("/"), data=payload, method="POST",
+                          headers={"Accept": "application/json", "Content-Type": "application/json"})
+        with urlopen(request, timeout=self.timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        if not isinstance(data, Mapping):
+            raise ValueError("Protocol v0 REST response must be a JSON object")
+        return data
+
 class _SocketHandle:
     def __init__(self, sock, on_event, on_close):
         self.sock, self.on_close, self.closed = sock, on_close, False
@@ -110,10 +120,11 @@ class WebSocketConnector:
 class ProtocolClient:
     STATES = {"STOPPED", "CONNECTING", "SYNCING", "LIVE", "DEGRADED", "RECONNECT_WAIT", "OFFLINE", "STOPPING"}
     def __init__(self, *, rest_get: Callable[[str], Mapping[str, Any]], ws_connect,
+                 rest_post: Callable[[str, Mapping[str, Any]], Mapping[str, Any]] | None = None,
                  store: StateStore | None = None, retry_policy: RetryPolicy | None = None,
                  random_fn: Callable[[], float] = random.random, clock: Callable[[], float] = time.monotonic,
                  schedule_fn=None):
-        self.rest_get, self.ws_connect = rest_get, ws_connect
+        self.rest_get, self.ws_connect, self.rest_post = rest_get, ws_connect, rest_post
         self.store, self.retry_policy = store or StateStore(), retry_policy or RetryPolicy()
         self.random_fn, self.clock = random_fn, clock
         self.schedule_fn = schedule_fn or self._schedule
@@ -121,6 +132,23 @@ class ProtocolClient:
         self._attempt, self._connected_at = 0, None
         self._stopping = self._buffering = False
         self._buffer: list[Mapping[str, Any]] = []
+    def submit_task(self, message: str, *, project: str = "", channel: str = "desktop",
+                    metadata: Mapping[str, Any] | None = None, recipe: str | None = None) -> Mapping[str, Any]:
+        """Submit new work using the public POST /v1/tasks intake endpoint."""
+        if self.rest_post is None:
+            raise RuntimeError("No REST POST adapter configured; pass HttpRestAdapter.post as rest_post")
+        text = str(message).strip()
+        if not text:
+            raise ValueError("message must not be empty")
+        body: dict[str, Any] = {"message": text, "project": project, "channel": channel}
+        if metadata: body["metadata"] = dict(metadata)
+        if recipe: body["recipe"] = recipe
+        result = self.rest_post("/v1/tasks", body)
+        if result.get("ok") is False:
+            error = result.get("error", {})
+            raise RuntimeError(str(error.get("message") if isinstance(error, Mapping) else error or "task submission rejected"))
+        return result
+
     @staticmethod
     def _schedule(delay, callback):
         timer = threading.Timer(delay, callback); timer.daemon = True; timer.start(); return timer
