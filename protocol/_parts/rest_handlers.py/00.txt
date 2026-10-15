@@ -1,0 +1,103 @@
+# -*- coding: utf-8 -*-
+"""Pure REST handlers for Protocol v0 (read-mostly + intake POST)."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+
+def _project_root() -> Path:
+    try:
+        env = os.getenv("AGENTBUS_ROOT") or os.getenv("NVCODE_ROOT")
+        if env:
+            return Path(env).resolve()
+    except Exception:
+        pass
+    try:
+        from core.config import BASE_DIR, PROJECT_ROOT
+
+        if PROJECT_ROOT:
+            return Path(PROJECT_ROOT).resolve()
+        if BASE_DIR:
+            return Path(BASE_DIR).resolve()
+    except Exception:
+        pass
+    return Path(".").resolve()
+
+
+def _channels_root(root: Path) -> Path:
+    return root / "channels"
+
+
+def health() -> dict[str, Any]:
+    try:
+        from protocol import __version__, PROTOCOL_VERSION
+    except Exception:
+        __version__, PROTOCOL_VERSION = "0.1.0", 1
+    return {
+        "ok": True,
+        "service": "nvcode-protocol",
+        "version": __version__,
+        "protocol": PROTOCOL_VERSION,
+        "bind": "localhost",
+    }
+
+
+def status() -> dict[str, Any]:
+    root = _project_root()
+    data: dict[str, Any] = {
+        "ok": True,
+        "root": str(root),
+        "queues": {},
+        "policy": {},
+        "runtimes": [],
+    }
+    try:
+        from core.local_queue import get_local_queue
+
+        data["desktop_queue"] = int(get_local_queue(root).size())
+        data["queues"]["desktop"] = data["desktop_queue"]
+    except Exception as e:
+        data["desktop_queue"] = 0
+        data["queues_error"] = str(e)[:200]
+
+    ch_root = _channels_root(root)
+    if ch_root.is_dir():
+        for ch in sorted(p.name for p in ch_root.iterdir() if p.is_dir()):
+            counts: dict[str, int] = {}
+            for name in ("incoming", "processing", "done", "errors", "deferred", "quarantine"):
+                d = ch_root / ch / name
+                counts[name] = len(list(d.glob("*.json"))) if d.is_dir() else 0
+            data["queues"][ch] = counts
+
+    try:
+        from core.policy import load_policy
+
+        p = load_policy()
+        data["policy"] = {
+            "name": getattr(p, "name", None),
+            "allow_cloud": getattr(p, "allow_cloud", None),
+            "prefer_local": getattr(p, "prefer_local", None),
+        }
+    except Exception:
+        pass
+    return data
+
+
+def _iter_task_files(state: str | None = None, channel: str | None = None) -> list[tuple[str, str, Path]]:
+    root = _channels_root(_project_root())
+    if not root.is_dir():
+        return []
+    states = (state,) if state else ("incoming", "processing", "done", "errors", "deferred")
+    channels = (channel,) if channel else tuple(p.name for p in root.iterdir() if p.is_dir())
+    out: list[tuple[str, str, Path]] = []
+    for ch in channels:
+        for st in states:
+            d = root / ch / st
+            if not d.is_dir():
+                continue
+            for p in sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+                out.append((ch, st, p))
+    return out
