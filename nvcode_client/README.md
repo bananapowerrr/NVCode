@@ -76,3 +76,24 @@ git diff --name-only origin/main...HEAD
 ```
 
 Expected changed paths for this UI work are limited to `nvcode_client/` and `tests/test_ui_client.py`. Verify the diff contains no `src/core/` files or legacy Tkinter changes. Do not mark the PR ready to merge until the targeted and repository-wide suites both exit 0 in the same checkout.
+
+
+## Reference integration demo
+
+Run a deterministic offline demo (no server required):
+
+```bash
+python -m nvcode_client.demo
+```
+
+It initializes `ProtocolClient`, subscribes all four panel controllers, submits a task through the same `POST /v1/tasks` adapter contract, and emits mock task/worker/log/metric events through the WebSocket callback. Each subscriber prints JSON snapshots suitable for adapting to a terminal or GUI.
+
+With the Protocol v0 server already running on localhost:
+
+```bash
+python -m nvcode_client.demo --live
+# or choose the task whose events the chat panel should display:
+python -m nvcode_client.demo --live --task-id TASK_ID
+```
+
+The live example submits a real task, so use it only when that is intended. `--base-url` and `--ws-url` can override the local endpoints.
