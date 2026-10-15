@@ -95,6 +95,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskDetailResponse"
+  /v1/tasks/{task_id}/cancel:
+    post:
+      summary: Cancel a non-terminal task
+      operationId: cancelTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Cancelled (moved to deferred)
+        "404":
+          description: Not found
+        "409":
+          description: Already terminal or not cancellable
   /v1/workers:
     get:
       summary: Workers (read-only, derived from leases)

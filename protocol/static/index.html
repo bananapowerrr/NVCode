@@ -75,7 +75,7 @@
       <h2>Tasks</h2>
       <div style="overflow:auto; max-height:260px">
         <table>
-          <thead><tr><th>ID</th><th>Status</th><th>Channel</th><th>Message</th></tr></thead>
+          <thead><tr><th>ID</th><th>Status</th><th>Channel</th><th>Message</th><th></th></tr></thead>
           <tbody id="tasks"></tbody>
         </table>
       </div>
@@ -111,13 +111,38 @@ function renderTasks(data) {
   tb.innerHTML = "";
   const list = (data && data.tasks) || [];
   if (!list.length) {
-    tb.innerHTML = "<tr><td colspan=4 style='color:var(--dim)'>No tasks</td></tr>";
+    tb.innerHTML = "<tr><td colspan=5 style='color:var(--dim)'>No tasks</td></tr>";
     return;
   }
   for (const t of list.slice(0, 50)) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(t.task_id||"")}</td><td>${esc(t.status||t.folder||"")}</td><td>${esc(t.channel||"")}</td><td>${esc((t.message||"").slice(0,80))}</td>`;
+    const st = String(t.status || t.folder || "");
+    const canCancel = ["incoming","processing","deferred","PENDING","CLAIMED","PROCESSING"].includes(st);
+    const id = t.task_id || "";
+    tr.innerHTML = `<td>${esc(id)}</td><td>${esc(st)}</td><td>${esc(t.channel||"")}</td><td>${esc((t.message||"").slice(0,80))}</td><td></td>`;
+    if (canCancel && id) {
+      const btn = document.createElement("button");
+      btn.className = "secondary";
+      btn.textContent = "Cancel";
+      btn.onclick = () => cancelTask(id);
+      tr.lastElementChild.appendChild(btn);
+    }
     tb.appendChild(tr);
+  }
+}
+
+async function cancelTask(taskId) {
+  try {
+    const r = await fetch("/v1/tasks/" + encodeURIComponent(taskId) + "/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "ui cancel" }),
+    });
+    const d = await r.json();
+    eventsEl.textContent = ("cancel → " + JSON.stringify(d) + "\n" + eventsEl.textContent).slice(0, 8000);
+    refresh();
+  } catch (e) {
+    eventsEl.textContent = "cancel error: " + e + "\n" + eventsEl.textContent;
   }
 }
 
