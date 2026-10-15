@@ -106,3 +106,75 @@ def test_ws_event_during_sync_is_replayed_after_snapshot():
     client = ProtocolClient(rest_get=get, ws_connect=connect, store=store)
     assert client.start()
     assert store.state.tasks["t1"]["status"] == "PROCESSING"
+
+
+# UI-002 controller observer tests
+
+from nvcode_client import ChatController, LogsMetricsController, QueueController, WorkersController
+
+
+def test_queue_controller_notifies_on_task_create_and_status_change():
+    store, received = StateStore(), []
+    controller = QueueController(store)
+    unsubscribe = controller.subscribe(received.append)
+    store.apply_event({"type": "task.created", "ts": "1", "payload": {"task_id": "q1", "message": "hello"}})
+    store.apply_event({"type": "task.status", "ts": "2", "payload": {"task_id": "q1", "to": "PROCESSING"}})
+    assert len(received) == 3  # initial snapshot plus both state changes
+    assert received[-1]["tasks"][0]["status"] == "PROCESSING"
+    unsubscribe()
+    store.apply_event({"type": "task.terminal", "ts": "3", "payload": {"task_id": "q1", "status": "DONE"}})
+    assert len(received) == 3
+    controller.close()
+
+
+def test_chat_controller_filters_task_events_and_posts_to_v1_tasks():
+    store, posts, received = StateStore(), [], []
+    client = ProtocolClient(rest_get=fake_rest(), ws_connect=lambda e, c: FakeWs(),
+                            rest_post=lambda path, body: posts.append((path, dict(body))) or {"ok": True, "task_id": "new"})
+    client.store = store
+    controller = ChatController(client, "task-a")
+    controller.subscribe(received.append)
+    store.apply_event({"type": "task.status", "ts": "a", "payload": {"task_id": "task-b", "to": "PROCESSING"}})
+    assert len(received) == 1
+    store.apply_event({"type": "log.line", "ts": "b", "payload": {"task_id": "task-a", "text": "hello"}})
+    assert len(received) == 2
+    result = controller.send_message("follow up")
+    assert result["task_id"] == "new"
+    assert posts == [("/v1/tasks", {"message": "follow up", "project": "", "channel": "desktop",
+                                    "metadata": {"related_task_id": "task-a"}})]
+    controller.close()
+
+
+def test_workers_controller_notifies_on_worker_events_and_snapshots():
+    store, received = StateStore(), []
+    controller = WorkersController(store)
+    controller.subscribe(received.append)
+    store.apply_event({"type": "worker.busy", "ts": "1", "payload": {"worker_id": "w1", "task_id": "t1"}})
+    assert received[-1]["workers"][0]["status"] == "BUSY"
+    ticket = store.begin_sync()
+    store.apply_snapshot(ticket, workers={"workers": [{"worker_id": "w2", "status": "READY"}]},
+                         leases={"leases": [{"task_id": "t2", "worker_id": "w2"}]})
+    assert received[-1]["workers"][0]["worker_id"] == "w2"
+    assert received[-1]["leases"][0]["task_id"] == "t2"
+    controller.close()
+
+
+def test_logs_metrics_controller_filters_logs_and_emits_metric_ticks():
+    store, received = StateStore(), []
+    controller = LogsMetricsController(store, level="error", task_id="t1")
+    controller.subscribe(received.append)
+    store.apply_event({"type": "log.line", "ts": "1", "payload": {"level": "info", "task_id": "t1", "text": "ignore"}})
+    store.apply_event({"type": "log.line", "ts": "2", "payload": {"level": "error", "task_id": "t2", "text": "ignore"}})
+    store.apply_event({"type": "log.line", "ts": "3", "payload": {"level": "error", "task_id": "t1", "text": "keep"}})
+    assert received[-1]["logs"] == [{"level": "error", "task_id": "t1", "text": "keep"}]
+    store.apply_event({"type": "metric.tick", "ts": "4", "payload": {"jobs": 2}})
+    assert received[-1]["metrics"] == {"jobs": 2}
+    controller.close()
+
+
+def test_store_subscriber_failures_do_not_block_other_subscribers():
+    store, received = StateStore(), []
+    store.subscribe(lambda change: (_ for _ in ()).throw(RuntimeError("broken view")))
+    store.subscribe(received.append)
+    store.apply_event({"type": "task.created", "ts": "1", "payload": {"task_id": "t1"}})
+    assert received[-1]["kind"] == "event"
