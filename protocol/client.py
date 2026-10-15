@@ -5,6 +5,7 @@ Examples:
   python -m protocol.client health
   python -m protocol.client submit "Fix the bug"
   python -m protocol.client cancel <task_id>
+  python -m protocol.client logs --task T1 --level ERROR
   python -m protocol.client watch --max-events 5
 """
 from __future__ import annotations
@@ -104,8 +105,18 @@ class ProtocolClient:
     def metrics(self) -> dict[str, Any]:
         return self.get_json("/v1/metrics")
 
-    def logs_tail(self, n: int = 100) -> dict[str, Any]:
-        return self.get_json("/v1/logs/tail", {"n": n})
+    def logs_tail(
+        self,
+        n: int = 100,
+        *,
+        task_id: str | None = None,
+        level: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        return self.get_json(
+            "/v1/logs/tail",
+            {"n": n, "task_id": task_id, "level": level, "source": source},
+        )
 
     def workers(self) -> dict[str, Any]:
         return self.get_json("/v1/workers")
@@ -203,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
 
     lg = sub.add_parser("logs", help="GET /v1/logs/tail")
     lg.add_argument("--n", type=int, default=100)
+    lg.add_argument("--task", "--task-id", dest="task_id", default=None)
+    lg.add_argument("--level", default=None, help="DEBUG|INFO|WARN|ERROR|CRITICAL")
+    lg.add_argument("--source", default=None, help="log file / source filter")
 
     w = sub.add_parser("watch", help="SSE event stream")
     w.add_argument("--max-events", type=int, default=0, help="0 = until Ctrl+C")
@@ -236,7 +250,9 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(body)
             return 0 if code == 200 and body.get("ok") else 1
         elif args.cmd == "logs":
-            body = client.logs_tail(n=args.n)
+            body = client.logs_tail(
+                n=args.n, task_id=args.task_id, level=args.level, source=args.source
+            )
             for line in body.get("lines") or []:
                 print(line)
             return 0
