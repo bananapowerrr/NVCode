@@ -996,25 +996,34 @@ class RuntimeOps:
         return recovered
 
     def _touch_task_lease(self, task: "Task", phase: str = "work") -> None:
-        """Refresh processing lease heartbeat for long-running tasks."""
+        """Refresh processing lease heartbeat for long-running tasks.
+
+        TD-006: pass worker_id so touch_lease refuses to refresh a foreign lease.
+        """
         try:
             from core.reclaim import touch_lease, write_lease, compute_stuck_timeout_sec, task_complexity
             p = self.bus.paths(task.channel)["processing"] / f"{task.id}.json"
             if not p.is_file():
                 return
+            wid = str(
+                getattr(task, "worker", "")
+                or getattr(task, "executor", "")
+                or getattr(self, "worker_id", "")
+                or ""
+            )
             lease = p.with_name(p.stem + ".lease.json")
             if not lease.is_file():
                 write_lease(
                     p,
                     task_id=str(task.id),
-                    worker=str(getattr(task, "worker", "") or ""),
+                    worker=wid,
                     complexity=task_complexity(task.to_dict()),
                     attempts=int(getattr(task, "attempts", 0) or 0),
                     stuck_timeout_sec=compute_stuck_timeout_sec(task.to_dict()),
                     phase=phase,
                 )
             else:
-                touch_lease(p, phase=phase)
+                touch_lease(p, phase=phase, expected_worker_id=wid or None)
             try:
                 p.touch()
             except OSError:

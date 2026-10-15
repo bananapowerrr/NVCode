@@ -312,11 +312,7 @@ class RPCacheSkillsMixin:
             self.report.record("DONE", "cache", task.attempts)
         except Exception:
             pass
-        try:
-            from utils.metrics import GLOBAL_METRICS
-            GLOBAL_METRICS.record_task(task, "cache", True, 0.0, status="DONE")
-        except Exception:
-            pass
+        # W3: record_task omitted — finish_task already recorded terminal metrics
         try:
             self.log.log_task_done(task.id, "cache", 0.0, 0, channel=task.channel)
         except Exception:
@@ -661,12 +657,7 @@ class RPCacheSkillsMixin:
             self.report.record("DONE", "skill", task.attempts)
         except Exception:
             pass
-        try:
-            from utils.metrics import GLOBAL_METRICS
-            GLOBAL_METRICS.record_task(
-                task, "skill", True, 0.0, status="DONE")
-        except Exception:
-            pass
+        # W3: record_task omitted — finish_task already recorded terminal metrics
         try:
             self._maybe_update_project_memory(task, success=True)
         except Exception:
