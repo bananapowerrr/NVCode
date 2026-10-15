@@ -68,14 +68,11 @@ def test_controller_subscription_is_dispatched_and_unsubscribable():
     loop.pump()
     assert seen[-1]["tasks"] == []
 
-    Thread(target=lambda: store.apply_event({
+    worker = Thread(target=lambda: store.apply_event({
         "type": "task.created", "ts": "1", "payload": {"task_id": "t1", "status": "PENDING"}
-    })).start()
-    # Join via a second, explicitly retained thread to make the handoff deterministic.
-    import time
-    deadline = time.monotonic() + 2
-    while dispatcher.pending_count == 0 and time.monotonic() < deadline:
-        time.sleep(0.005)
+    }))
+    worker.start()
+    worker.join()
     loop.pump()
     assert seen[-1]["tasks"][0]["task_id"] == "t1"
 
