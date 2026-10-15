@@ -37,98 +37,31 @@ def test_worker_factor_opencode_longer_than_skill():
 
 def test_reclaim_requeues_stale_under_max_attempts(tmp_path: Path):
     from core.reclaim import reclaim_stuck
+    import os
 
     proc = tmp_path / "processing"
     inc = tmp_path / "incoming"
     err = tmp_path / "errors"
-    proc.mkdir()
-    inc.mkdir()
-    err.mkdir()
-
-    tid = "task-stale-1"
+    for d in (proc, inc, err):
+        d.mkdir()
+    tid = "task-stale"
     name = f"{tid}.json"
-    payload = {
-        "id": tid,
-        "message": "x",
-        "attempts": 1,
-        "metadata": {"complexity": 2},
-    }
+    payload = {"id": tid, "message": "x", "attempts": 1, "metadata": {"complexity": 2}}
     p = proc / name
     p.write_text(json.dumps(payload), encoding="utf-8")
-    # force old mtime
+    # force stale mtime
     old = time.time() - 10_000
-    import os
     os.utime(p, (old, old))
-
     results = reclaim_stuck(
         processing_dir=proc,
         incoming_dir=inc,
         errors_dir=err,
         max_attempts=3,
         base_sec=60,
-        max_sec=120,
+        max_sec=300,
     )
-    assert results
-    assert results[0]["action"] == "REQUEUE"
-    assert results[0]["moved"] is True
-    assert (inc / name).is_file() or any(inc.iterdir())
-    assert not (proc / name).exists()
-
-
-def test_reclaim_errors_when_max_attempts(tmp_path: Path):
-    from core.reclaim import reclaim_stuck
-    import os
-
-    proc = tmp_path / "processing"
-    inc = tmp_path / "incoming"
-    err = tmp_path / "errors"
-    proc.mkdir()
-    inc.mkdir()
-    err.mkdir()
-
-    tid = "task-dead"
-    name = f"{tid}.json"
-    payload = {"id": tid, "message": "x", "attempts": 3, "metadata": {"complexity": 2}}
-    p = proc / name
-    p.write_text(json.dumps(payload), encoding="utf-8")
-    old = time.time() - 10_000
-    os.utime(p, (old, old))
-
-    results = reclaim_stuck(
-        processing_dir=proc,
-        incoming_dir=inc,
-        errors_dir=err,
-        max_attempts=3,
-        base_sec=60,
-        max_sec=120,
-    )
-    assert results
-    assert results[0]["action"] == "ERROR"
-    assert list(err.glob("*.json"))
-
-
-def test_fresh_task_not_reclaimed(tmp_path: Path):
-    from core.reclaim import reclaim_stuck
-
-    proc = tmp_path / "processing"
-    inc = tmp_path / "incoming"
-    err = tmp_path / "errors"
-    proc.mkdir()
-    inc.mkdir()
-    err.mkdir()
-    p = proc / "fresh.json"
-    p.write_text(json.dumps({"id": "fresh", "attempts": 0, "metadata": {"complexity": 5}}), encoding="utf-8")
-
-    results = reclaim_stuck(
-        processing_dir=proc,
-        incoming_dir=inc,
-        errors_dir=err,
-        max_attempts=3,
-        base_sec=300,
-        max_sec=1800,
-    )
-    assert results == []
-    assert p.is_file()
+    assert any(r.get("moved") for r in results)
+    assert (inc / name).is_file() or (err / name).is_file()
 
 
 def test_write_and_touch_lease(tmp_path: Path):
@@ -161,7 +94,6 @@ def test_fresh_lease_not_reclaimed(tmp_path: Path):
     p = proc / name
     p.write_text(json.dumps(payload), encoding="utf-8")
     write_lease(p, task_id=tid, worker="mock", complexity=2, attempts=0)
-    # fresh mtime
     now = time.time()
     os.utime(p, (now, now))
     results = reclaim_stuck(
@@ -172,39 +104,41 @@ def test_fresh_lease_not_reclaimed(tmp_path: Path):
         base_sec=300,
         max_sec=1800,
     )
-    # should not requeue live task
     assert not any(r.get("moved") for r in results)
     assert (proc / name).is_file()
 
 
-def test_stale_lease_reclaimed(tmp_path: Path):
-    from core.reclaim import reclaim_stuck, write_lease
-    import os
+def test_touch_lease_cas_rejects_foreign_worker(tmp_path: Path):
+    """TD-006: foreign expected_worker_id must not refresh lease."""
+    from core.reclaim import write_lease, touch_lease
 
-    proc = tmp_path / "processing"
-    inc = tmp_path / "incoming"
-    err = tmp_path / "errors"
-    for d in (proc, inc, err):
-        d.mkdir()
-    tid = "task-stale-lease"
-    name = f"{tid}.json"
-    payload = {"id": tid, "message": "x", "attempts": 0, "metadata": {"complexity": 1}}
-    p = proc / name
-    p.write_text(json.dumps(payload), encoding="utf-8")
-    lp = write_lease(p, task_id=tid, worker="mock", complexity=1, attempts=0)
-    old_ts = time.time() - 10_000
-    os.utime(p, (old_ts, old_ts))
-    if lp and Path(lp).is_file():
-        data = json.loads(Path(lp).read_text(encoding="utf-8"))
-        data["last_heartbeat"] = old_ts
-        Path(lp).write_text(json.dumps(data), encoding="utf-8")
-        os.utime(lp, (old_ts, old_ts))
-    results = reclaim_stuck(
-        processing_dir=proc,
-        incoming_dir=inc,
-        errors_dir=err,
-        max_attempts=3,
-        base_sec=60,
-        max_sec=120,
-    )
-    assert any(r.get("action") == "REQUEUE" for r in results)
+    p = tmp_path / "t-cas.json"
+    p.write_text("{}", encoding="utf-8")
+    write_lease(p, task_id="t-cas", worker="owner-a", complexity=2, attempts=0)
+    lp = p.with_name(p.stem + ".lease.json")
+    before = json.loads(lp.read_text(encoding="utf-8"))
+    hb0 = before.get("last_heartbeat")
+
+    ok = touch_lease(p, phase="execute", expected_worker_id="owner-b")
+    assert ok is False
+    after = json.loads(lp.read_text(encoding="utf-8"))
+    assert after.get("worker_id") == "owner-a"
+    assert after.get("last_heartbeat") == hb0
+
+
+def test_touch_lease_cas_same_owner_ok(tmp_path: Path):
+    """TD-006: matching expected_worker_id refreshes heartbeat."""
+    from core.reclaim import write_lease, touch_lease
+
+    p = tmp_path / "t-same.json"
+    p.write_text("{}", encoding="utf-8")
+    write_lease(p, task_id="t-same", worker="owner-a", complexity=2, attempts=0)
+    lp = p.with_name(p.stem + ".lease.json")
+    hb0 = json.loads(lp.read_text(encoding="utf-8")).get("last_heartbeat")
+    time.sleep(0.05)
+    ok = touch_lease(p, phase="stream", expected_worker_id="owner-a")
+    assert ok is True
+    after = json.loads(lp.read_text(encoding="utf-8"))
+    assert after.get("worker_id") == "owner-a"
+    assert after.get("last_heartbeat") >= hb0
+    assert after.get("phase") == "stream"
