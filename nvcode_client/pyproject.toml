@@ -8,8 +8,6 @@ version = "0.1.0"
 description = "UI-independent Python client SDK for the NVCode Protocol v0 API"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
-authors = [{ name = "NVCode contributors" }]
 dependencies = []
 
 [project.scripts]
