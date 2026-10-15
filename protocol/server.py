@@ -62,7 +62,7 @@ class ProtocolHandler(BaseHTTPRequestHandler):
         try:
             data = path.read_bytes()
         except OSError:
-            self._send_json(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": str(path.name)}})>
+            self._send_json(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": str(path.name)}})
             return
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -170,7 +170,6 @@ class ProtocolHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             hello = make_envelope("runtime.health", {"ok": True, "stream": "sse"})
             self.wfile.write(f"data: {json.dumps(hello, ensure_ascii=False)}\n\n".encode("utf-8"))
