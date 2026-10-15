@@ -1,77 +1,76 @@
-# NVCode / AgentBus — Getting Started
+# NVCode — Getting Started
 
-## Установка
+## Requirements
+
+- Python 3.11 or newer.
+- Git.
+- Optional local inference: Ollama or LM Studio.
+- Desktop UI dependencies from `requirements-ui.txt`.
+
+## Install
+
+Run from the repository root (the checkout directory is typically `NVCode`):
 
 ```bash
-cd AgentBus
+python -m venv .venv
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# macOS / Linux:
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install -r requirements-ui.txt
 ```
 
-Нужен Python 3.10+.
+If the project bootstrap script is appropriate for your platform, you can instead inspect and run `python scripts/bootstrap.py`.
 
-## Первый запуск
+## First run
 
 ```bash
+python dispatcher.py --init
+python dispatcher.py --doctor
+```
+
+Start the runtime and UI in separate terminals:
+
+```bash
+python dispatcher.py
 python dispatcher_ui.py
 ```
 
-1. **Wizard** — профиль агента (Новичок / Разработчик / Продвинутый / Авто).
-2. После setup в чат попадут **Health** и **Suggest** (без авто-задач).
-3. Запусти диспетчер слева (или автостарт, если включён).
+On Windows, review `scripts/start_all.bat` and `docs/INSTALL_WINDOWS.md` for supported launch options.
 
-Runtime отдельно (терминал):
+## Optional local model
+
+For Ollama, one possible starting point is:
 
 ```bash
-python dispatcher.py --doctor
-python dispatcher.py
+ollama pull qwen2.5-coder:7b
 ```
 
-## Рабочий цикл
+Choose the model and provider based on available hardware. A model download does not by itself prove that a worker is correctly configured.
+
+## Workflow
 
 ```
-Чат или Composer → очередь → worker → verify → Report
-    → Review / Continue / Undo
+Request → task queue → worker / runtime → checks → result and diff → review
 ```
 
-| Действие | Смысл |
-|----------|--------|
-| **Чат** | Основной ввод |
-| **Ctrl+K → Composer** | Явная форма задачи → `channels/desktop/incoming` |
-| **Continue** | Только выбранные next steps (чекбоксы) |
-| **Review** | Diff / changes |
-| **Undo** | Откат apply агента |
-| **Agent · …** | Автономность и подсказки — **разные** оси |
-| **?** | Почему (HelpPopover) |
+Use the UI's task and change-review actions to inspect generated modifications before relying on them. A successful individual task is not the same as a release-readiness result for the entire project.
 
-## Профили
+## Verify the checkout
 
-- **Новичок** — больше подсказок, меньше автономии  
-- **Разработчик** — баланс  
-- **Продвинутый** — меньше шума  
-- **Авто** — адаптивно  
+```bash
+python scripts/project_audit.py
+python -m pytest -q
+bash scripts/ci_smoke.sh
+```
 
-Профиль — defaults. Можно менять в Settings → Agent или popover.  
-Система **не** меняет профиль молча (habit только спрашивает).
+Run the checks supported by your environment and report failures honestly. Do not treat an unrun command as a pass.
 
-## Принцип
+## Documentation
 
-> Intelligence предлагает → Runtime решает → Verify закрывает DONE.
+See [docs/INDEX.md](INDEX.md) for architecture, contracts, live checks, troubleshooting, product status, and technical debt.
 
-**Task DONE** ≠ **Project READY**.
+## Legacy names
 
-## Опционально
-
-- File-bus с телефона (`channels/`) — доп. модуль, не главный UX.
-- Ollama / Aider — на машине, см. `docs/LIVE_ACCEPTANCE.md`.
-
-## Документы
-
-- `docs/PRODUCT_STATUS.md` — что готово  
-- `docs/LIVE_ACCEPTANCE.md` — чеклист на ПК  
-- `README.md` — обзор  
-
-## Если UI «молчит»
-
-1. Диспетчер запущен?  
-2. Проект выбран?  
-3. `python dispatcher.py --doctor`  
+NVCode is the product name. Existing configuration keys and local data paths may still use `AGENTBUS_*` and `.agentbus/`; do not rename these manually without a tested migration.

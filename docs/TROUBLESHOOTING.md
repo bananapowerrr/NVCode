@@ -34,13 +34,13 @@ python dispatcher_ui.py
 
 ## Import errors
 
-Запуск из корня AgentBus, `PYTHONPATH=src:.` для pytest.
+Запуск из корня NVCode, `PYTHONPATH=src:.` для pytest.
 
 
 ## Задача в errors: false_DONE
 
 Проверка pytest ничего не собрала (`collected 0 items`).  
-AgentBus **не** считает это успехом при `AGENTBUS_STRICT_VERIFY=1` (по умолчанию).
+NVCode **не** считает это успехом при `AGENTBUS_STRICT_VERIFY=1` (по умолчанию).
 
 - Добавьте тесты или сузьте `task.verify`
 - Для тривиальных правок complexity 1 → достаточно L0/L1

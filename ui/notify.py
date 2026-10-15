@@ -21,9 +21,9 @@ def notify(title: str, message: str, *, timeout: int = 5, dedupe_key: Optional[s
     try:
         from plyer import notification
         notification.notify(
-            title=title or "AgentBus",
+            title=title or "NVCode",
             message=(message or "")[:200],
-            app_name="AgentBus",
+            app_name="NVCode",
             timeout=timeout,
         )
         return True

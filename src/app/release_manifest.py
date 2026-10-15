@@ -2,7 +2,7 @@
 """Release manifest contract (UPDATE-001A).
 
 Published on GitHub Releases as `release.json` (or similar).
-AgentBus UpdateChecker only *reads* this — install is external updater.
+NVCode UpdateChecker only *reads* this — install is external updater.
 """
 from __future__ import annotations
 
@@ -60,12 +60,12 @@ def example_manifest(
     *,
     version: str = "0.10.1",
     channel: str = "stable",
-    url: str = "https://github.com/bananapowerrr/Dispatcher/releases/download/v0.10.1/AgentBus-0.10.1-win64.zip",
+    url: str = "https://github.com/bananapowerrr/NVCode/releases/download/v0.10.1/NVCode-0.10.1-src.zip",
     sha256: str = "0" * 64,
 ) -> dict[str, Any]:
     """Template for Release pipeline (not used at runtime for install)."""
     return {
-        "app": "AgentBus",
+        "app": "NVCode",
         "version": version,
         "channel": channel,
         "published_at": "2026-09-21T00:00:00Z",
@@ -78,7 +78,8 @@ def example_manifest(
             "format": "zip",
         },
         "user_data_paths": [
-            "%APPDATA%/AgentBus",
+            "%APPDATA%/AgentBus",  # legacy data path; preserve existing installations
+            "%APPDATA%/NVCode",
         ],
         "install_paths_hint": [
             "binaries",

@@ -13,7 +13,7 @@ doctor → dispatcher + UI → 1 задача → diff/verify → DONE
 ## 0. Подготовка (один раз)
 
 ```bash
-cd AgentBus
+cd NVCode
 pip install -r requirements.txt
 pip install -r requirements-ui.txt
 
@@ -28,7 +28,7 @@ ollama pull qwen2.5:1.5b-instruct
 Создай **отдельный** git-репозиторий-песочницу (не боевой dirty tree):
 
 ```bash
-mkdir -p ~/agentbus_sandbox && cd ~/agentbus_sandbox
+mkdir -p ~/nvcode_sandbox && cd ~/nvcode_sandbox
 git init && echo "print('hi')" > app.py && git add . && git commit -m init
 ```
 

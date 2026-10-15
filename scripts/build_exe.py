@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Build AgentBus Windows package via PyInstaller.
+"""Build the NVCode Windows package via PyInstaller.
 
 On Windows (from repo root):
     pip install pyinstaller
     python scripts/build_exe.py
 
 Produces:
-    dist/AgentBusUI.exe   — GUI (chat)
-    dist/AgentBus.exe     — dispatcher CLI (console)
+    dist/NVCodeUI.exe   — GUI (chat)
+    dist/NVCode.exe     — dispatcher CLI (console)
 
-Workers (aider/ollama) still need system Python/tools; the exe wraps entrypoints.
+Workers (Aider/Ollama) still need system Python/tools; the executables wrap entry points.
 """
 from __future__ import annotations
 
@@ -46,34 +46,30 @@ def main() -> int:
         "--hidden-import=core.dispatcher_main",
         "--collect-all=customtkinter",
     ]
-    print("Building AgentBusUI (windowed)…")
-    rc = _run(
-        [
-            "dispatcher_ui.py",
-            "--name=AgentBusUI",
-            "--onefile",
-            "--windowed",
-            *data,
-            *hidden,
-            "--hidden-import=pystray",
-        ]
-    )
+    print("Building NVCodeUI (windowed)…")
+    rc = _run([
+        "dispatcher_ui.py",
+        "--name=NVCodeUI",
+        "--onefile",
+        "--windowed",
+        *data,
+        *hidden,
+        "--hidden-import=pystray",
+    ])
     if rc != 0:
         return rc
-    print("Building AgentBus (console dispatcher)…")
-    rc = _run(
-        [
-            "dispatcher.py",
-            "--name=AgentBus",
-            "--onefile",
-            "--console",
-            *data,
-            *hidden,
-        ]
-    )
+    print("Building NVCode (console dispatcher)…")
+    rc = _run([
+        "dispatcher.py",
+        "--name=NVCode",
+        "--onefile",
+        "--console",
+        *data,
+        *hidden,
+    ])
     if rc != 0:
         return rc
-    print("OK: dist/AgentBusUI.exe , dist/AgentBus.exe")
+    print("OK: dist/NVCodeUI.exe, dist/NVCode.exe")
     return 0
 
 
