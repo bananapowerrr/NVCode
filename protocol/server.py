@@ -161,6 +161,15 @@ class ProtocolHandler(BaseHTTPRequestHandler):
             code, obj = rh.create_task(body)
             self._send_json(code, obj)
             return
+        if path.startswith("/v1/tasks/") and path.endswith("/cancel"):
+            mid = path[len("/v1/tasks/") : -len("/cancel")].strip("/")
+            if mid:
+                from protocol.task_cancel import cancel_task
+
+                reason = str(body.get("reason") or "")
+                code, obj = cancel_task(mid, reason=reason)
+                self._send_json(code, obj)
+                return
         self._send_json(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": path}})
 
     def _handle_sse(self) -> None:
