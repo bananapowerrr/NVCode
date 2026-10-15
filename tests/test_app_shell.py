@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from threading import get_ident
+from threading import Thread, get_ident
 
 from nvcode_client import AppShell, ProtocolClient, StateStore
 
@@ -75,8 +75,14 @@ def test_app_shell_starts_projects_view_models_and_stops_idempotently():
     assert shell.panel_state["chat"]["task"].task_id == "t1"
     assert updates and all(thread_id == loop.owner for _, _, thread_id in updates)
 
-    callbacks["event"]({"type": "task.terminal", "ts": "terminal-1",
-                        "payload": {"task_id": "t1", "status": "DONE"}})
+    worker = Thread(target=lambda: callbacks["event"]({
+        "type": "task.terminal", "ts": "terminal-1",
+        "payload": {"task_id": "t1", "status": "DONE"},
+    }))
+    worker.start()
+    worker.join()
+    # WebSocket-thread changes are queued; view models mutate only when UI loop pumps.
+    assert shell.panel_state["queue"]["tasks"][0].status == "PENDING"
     loop.pump()
     assert shell.panel_state["queue"]["tasks"][0].status == "DONE"
 
