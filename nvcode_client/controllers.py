@@ -66,6 +66,7 @@ class ChatController(_Controller):
     """
     def __init__(self, client: ProtocolClient, task_id: str):
         self.client, self.task_id = client, str(task_id)
+        self._events: list[dict[str, Any]] = []
         super().__init__(client.store)
 
     def snapshot(self) -> dict[str, Any]:
@@ -74,7 +75,8 @@ class ChatController(_Controller):
                 if str(item.get("task_id", "")) == self.task_id]
         return {"task_id": self.task_id,
                 "task": dict(state.tasks[self.task_id]) if self.task_id in state.tasks else None,
-                "events": logs,
+                "events": [dict(item) for item in self._events],
+                "logs": logs,
                 "connection": state.connection}
 
     def _matches(self, change: Mapping[str, Any]) -> bool:
@@ -83,6 +85,14 @@ class ChatController(_Controller):
         event = change.get("event") or {}
         payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
         return str(payload.get("task_id", "")) == self.task_id
+
+    def _on_store_change(self, change: dict[str, Any]) -> None:
+        event = change.get("event") or {}
+        payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+        if change.get("kind") == "event" and str(payload.get("task_id", "")) == self.task_id:
+            self._events.append(dict(event))
+            self._events = self._events[-500:]
+        super()._on_store_change(change)
 
     def send_message(self, message: str, *, project: str = "", channel: str = "desktop",
                      metadata: Mapping[str, Any] | None = None, recipe: str | None = None) -> Mapping[str, Any]:
