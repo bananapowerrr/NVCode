@@ -15,7 +15,11 @@ from typing import Any
 
 PROTECTED_NAMES = {
     "update_job.json",
+    # Preserve legacy and current backup/staging directories during copy/replace.
     ".agentbus_backup",
+    ".nvcode_backup",
+    ".agentbus_staging",
+    ".nvcode_staging",
 }
 
 

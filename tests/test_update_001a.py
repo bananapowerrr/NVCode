@@ -5,7 +5,7 @@ def test_version_present():
 
     assert get_version()
     info = get_version_info()
-    assert info["app"] == "AgentBus"
+    assert info["app"] == "NVCode"
     assert is_newer("0.10.1", "0.10.0")
     assert not is_newer("0.10.0", "0.10.1")
     assert is_newer("1.0.0", "0.99.99")

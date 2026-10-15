@@ -17,7 +17,7 @@ from app.version import get_version, is_newer
 
 
 DEFAULT_MANIFEST_URL = (
-    "https://github.com/bananapowerrr/Dispatcher/releases/latest/download/release.json"
+    "https://github.com/bananapowerrr/NVCode/releases/latest/download/release.json"
 )
 
 # Fail-closed timeouts
@@ -82,14 +82,14 @@ def fetch_manifest(
     timeout: float = DEFAULT_TIMEOUT_SEC,
 ) -> tuple[dict[str, Any] | None, str]:
     """HTTP GET release manifest. Returns (data, error). Never raises."""
-    target = (url or os.getenv("AGENTBUS_RELEASE_MANIFEST_URL") or DEFAULT_MANIFEST_URL).strip()
+    target = (url or os.getenv("NVCODE_RELEASE_MANIFEST_URL") or os.getenv("AGENTBUS_RELEASE_MANIFEST_URL") or DEFAULT_MANIFEST_URL).strip()
     if not target.startswith(("https://", "http://")):
         return None, "url_scheme_invalid"
     try:
         req = Request(
             target,
             headers={
-                "User-Agent": "AgentBus-UpdateChecker/0.10",
+                "User-Agent": "NVCode-UpdateChecker/0.10",
                 "Accept": "application/json",
             },
             method="GET",
@@ -175,7 +175,7 @@ def format_update_notice(check: dict[str, Any] | None) -> str:
         return ""
     latest = c.get("latest") or "?"
     notes = str(c.get("notes") or "").strip()
-    lines = [f"Доступна новая версия AgentBus {latest}"]
+    lines = [f"Доступна новая версия NVCode {latest}"]
     if notes:
         lines.append(notes[:300])
     lines.append("[Обновить] [Позже]  — установка через внешний updater (UPDATE-001D)")

@@ -55,7 +55,7 @@ class SetupWizard(ctk.CTkToplevel if ctk else object):  # type: ignore
         if ctk is None:
             raise RuntimeError("customtkinter required")
         super().__init__(master)
-        self.title("AgentBus — настройка")
+        self.title("NVCode — настройка")
         self.geometry("560x520")
         self.resizable(False, False)
         self.transient(master)
@@ -118,7 +118,7 @@ class SetupWizard(ctk.CTkToplevel if ctk else object):  # type: ignore
         ctk.CTkLabel(
             self._body,
             text=(
-                "AgentBus работает на вашем компьютере — это преимущество:\n"
+                "NVCode работает на вашем компьютере — это преимущество:\n"
                 "без подписки, без обязательного облака, данные остаются у вас.\n\n"
                 "Нужен локальный сервер моделей:"
             ),
@@ -330,7 +330,7 @@ def maybe_run_wizard(master) -> None:
 
 def _beginner_welcome_text() -> str:
     return (
-        "AgentBus готов. Примеры задач:\n"
+        "NVCode готов. Примеры задач:\n"
         "• добавь docstring к функции main\n"
         "• исправь синтаксическую ошибку\n"
         "• отформатируй код в src/"

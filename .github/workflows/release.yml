@@ -1,4 +1,4 @@
-# UPDATE-001F — publish AgentBus release on tag v*
+# UPDATE-001F — publish NVCode release on tag v*
 name: release
 
 on:
@@ -36,7 +36,7 @@ jobs:
             V="${GITHUB_REF_NAME#v}"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "Building AgentBus $V"
+          echo "Building NVCode $V"
 
       - name: Build package + release.json
         run: |
@@ -44,12 +44,12 @@ jobs:
             --version "${{ steps.ver.outputs.version }}" \
             --channel stable \
             --out dist \
-            --notes "AgentBus ${{ steps.ver.outputs.version }}"
+            --notes "NVCode ${{ steps.ver.outputs.version }}"
 
       - name: Upload artifacts (CI)
         uses: actions/upload-artifact@v4
         with:
-          name: agentbus-release
+          name: nvcode-release
           path: |
             dist/*.zip
             dist/release.json
@@ -59,7 +59,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: AgentBus ${{ steps.ver.outputs.version }}
+          name: NVCode ${{ steps.ver.outputs.version }}
           files: |
             dist/*.zip
             dist/release.json

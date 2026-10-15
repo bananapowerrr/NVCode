@@ -1,130 +1,58 @@
-# Структура AgentBus (актуально)
+# NVCode repository structure
+
+This is a conceptual map of the current repository, not a generated file-by-file inventory. Confirm exact filenames in Git before relying on a path listed here.
 
 ```
-AgentBus/
-├── dispatcher.py          # CLI entry
-├── dispatcher_ui.py       # GUI entry
-├── requirements.txt
-├── README.md
-├── config/                # yaml, presets, policy, adapters
-├── recipes/               # JSON-сценарии для UI/CLI
-├── plugins/               # user plugins (example_hello.py)
+NVCode/
+├── dispatcher.py          # CLI / runtime entry point
+├── dispatcher_ui.py       # desktop UI entry point
+├── admin_ui.py            # administration UI entry point
+├── pyproject.toml         # package metadata and tool configuration
+├── requirements*.txt      # dependency sets
+├── config/                # policy, workers, providers, presets, UI strings
+├── recipes/               # reusable task recipes
+├── plugins/               # plugin integrations and examples
 ├── src/
-│   ├── app/               # Application API (UI façade)
-│   ├── core/              # runtime, bus, router, executor, doctor…
-│   │   ├── runtime.py / runtime_daemon.py           # оркестратор (+ daemon mixin)
-│   │   ├── runtime_ops.py       # exec/verify (+ mixins)
-│   │   ├── runtime_ops_claim.py # claim/lease/deferred
-│   │   ├── runtime_ops_git.py   # worktree/rollback
-│   │   ├── runtime_process.py   # aggregate mixins
-│   │   ├── rp_lifecycle.py      # process_body (+ mixins)
-│   │   ├── rp_lifecycle_stages.py # meta/hooks/decompose
-│   │   ├── rp_lifecycle_learn.py  # sentinel/MEMORY/lessons
-│   │   ├── rp_context.py        # prepare/build (+ mixins)
-│   │   ├── rp_context_budget.py # clamp + planner budget
-│   │   ├── rp_context_memory.py # conversation/MEMORY/RAG
-│   │   ├── rp_cache.py          # solution cache stage
-│   │   ├── rp_skills_stage.py   # deterministic skills stage
-│   │   ├── rp_cache_skills.py   # aggregate mixin
-│   │   ├── rp_llm.py            # worker loop (+ pool helpers)
-│   │   ├── rp_verify.py         # verify + quarantine
-│   │   ├── stage_guard.py       # optional stage isolation
-│   │   ├── doctor.py            # go/no-go checklist
-│   │   ├── executor.py          # ExecutionResult / timeout
-│   │   ├── pipeline_e2e.py      # mock E2E matrix
-│   │   ├── mock_worker.py       # offline scenarios
-│   │   ├── local_queue.py       # desktop chat primary
-│   │   ├── verify_policy.py     # ladder + anti false-DONE
-│   │   └── …
-│   ├── intelligence/
-│   ├── skills/
-│   │   ├── matcher.py / registry.py
-│   │   ├── skills.py          # thin SkillRegistry
-│   │   └── builtin/           # formatting, analysis, refactor, project, hygiene
-│   ├── safety/
-│   └── utils/
-├── ui/                    # CustomTkinter (chat, recipes, metrics…)
-├── tests/
-├── scripts/               # bootstrap, build_exe, benchmark_harness
-├── docs/                  # active docs (INDEX is SoT map)
-│   └── archive/           # HISTORICAL only — not architecture SoT
-└── channels/              # optional phone file-bus
+│   ├── app/               # application services / UI-facing API
+│   ├── cli/               # CLI support and command helpers
+│   ├── core/              # runtime, queue, routing, execution, verification
+│   ├── intelligence/      # planning and advisory intelligence
+│   ├── safety/            # safety checks and Git operations
+│   ├── skills/            # skill registry and built-in skills
+│   └── utils/             # shared utilities
+├── ui/                    # desktop interface and panels
+├── providers/             # provider adapters and registry
+├── eventbus/              # event handling
+├── tests/                 # automated tests
+├── scripts/               # bootstrap, audit, build, release, CI helpers
+├── .github/               # GitHub workflows and repository automation
+└── docs/                  # current docs and historical archive
 ```
 
-## Главный канал задач
+## Entry points
 
-**Desktop chat → `local_queue` → runtime.**  
-Phone `channels/` — опция (`phone_filebus: false` по умолчанию).
+- `python dispatcher.py --doctor` — inspect runtime prerequisites.
+- `python dispatcher.py` — start the runtime/dispatcher.
+- `python dispatcher_ui.py` — start the desktop UI.
+- `python scripts/project_audit.py` — run the project audit helper.
 
-## Runtime split (изоляция сбоев)
+## Main responsibilities
 
-```
-runtime.py
-runtime_ops.py
-runtime_process.py
-  rp_lifecycle / rp_context / rp_cache_skills / rp_llm / rp_verify
-pipeline_stages.py
-stage_guard.py   # @safe_stage для optional stages
-```
+| Area | Responsibility |
+|---|---|
+| `src/core/` | Task lifecycle, queue operations, routing, execution, verification, recovery |
+| `src/intelligence/` | Context, analysis, planning, advisory decisions |
+| `src/app/` | Application-facing services and workflows |
+| `src/safety/` | Policy enforcement and guarded operations |
+| `src/skills/` | Deterministic and extensible coding skills |
+| `ui/` | Desktop chat and supporting panels |
+| `config/` | Runtime policy, worker/provider settings, feature flags and localization |
+| `tests/` | Regression and integration coverage |
 
-Импорт снаружи: `from core.runtime import Runtime`.
+## Runtime-created directories
 
-## Масс-продукт (кратко)
+Directories such as `.agentbus/`, `channels/`, `logs/`, and `events/` may be created at runtime or by local workflows. Their absence from a fresh Git checkout is not necessarily a defect. Their contents should normally remain local and must not be committed unless a specific fixture or example is intentionally versioned.
 
-| Компонент | Назначение |
-|-----------|------------|
-| `doctor` / `--doctor` | Можно ли стартовать |
-| `recipes` + UI | Быстрые сценарии |
-| `native_backend` + fallback | Работа без Aider |
-| `verify_policy` | Нет ложного DONE |
-| `beginner_ru` preset | parallel=1, local-first |
-| `benchmark_harness` | Offline Pass@1 |
+## Compatibility naming
 
-## Запуск
-
-```bash
-python dispatcher.py --init
-python dispatcher.py --doctor
-python dispatcher.py
-python dispatcher_ui.py
-python scripts/benchmark_harness.py
-```
-
-## Task state machine
-
-```
-PENDING → CLAIMED → PROCESSING → VERIFYING → DONE
-                ↘ ERROR / DEFERRED
-ERROR|DEFERRED → CLAIMED (retry)
-DONE = terminal
-```
-
-DONE только после успешного verify (исключения: cache_hit, skill_success — явные short-circuit).
-
-## Идентичность и reclaim
-
-- Fingerprint: `core.dedupe.task_fingerprint` (нормализованный message, sorted files; без attempts/worker).
-- Reclaim: lease heartbeat; stuck → PENDING + attempts++ или ERROR при max_attempts.
-- Audit: `python scripts/project_audit.py`
-
-## Task Contract & VerificationEngine
-
-- `core.task_contract.normalize_task` — валидация JSON до runtime
-- `core.verification_engine.VerificationEngine` — syntax / static / cmds + anti false-DONE
-- `gate_done(execution_ok, report)` — DONE только если оба OK (или short_circuit cache/skill)
-
-
-## Milestone 0.10 (offline-ready)
-
-| Блок | Статус |
-|------|:------:|
-| Task FSM + anti false-DONE | ✅ |
-| Task Contract | ✅ |
-| VerificationEngine | ✅ |
-| MockWorker + pipeline E2E | ✅ |
-| Router 2.0 (`router_score`) | ✅ |
-| Skills 2.0 (`builtin/` + matcher) | ✅ |
-| TaskTrace | ✅ |
-| Live Ollama/Aider | ⏳ на машине |
-
-См. также: [SKILLS.md](SKILLS.md), [FEATURE_FLAGS.md](FEATURE_FLAGS.md).
+The product is named **NVCode**. Internal identifiers such as `AGENTBUS_*`, `agentbus_root()`, and `.agentbus/` are legacy names still present in code. Treat their replacement as a migration task with tests, not as a cosmetic rename.

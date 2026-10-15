@@ -1,23 +1,5 @@
-# OFFLINE FREEZE = GREEN
+# Historical development freeze — superseded
 
-**Status:** frozen until first real live on PC.
+This document recorded temporary restrictions from an earlier offline development phase. Those restrictions are no longer active and must not be used to block current NVCode development.
 
-## Allowed
-- Live runbook / acceptance docs
-- Run logging diagnostics
-- Bug triage templates
-- OpenCode `AGENTS.md` context
-- Safe scripts that only collect evidence
-
-## Forbidden
-- New AI features, MCP, RAG, memory, autopilot
-- Runtime/FSM/Plan contract changes
-- UI rewrite
-- Work for the sake of commits
-
-## Gate
-```bash
-bash scripts/ci_offline.sh   # must stay GREEN
-```
-
-Next human step: `docs/LIVE_RUNBOOK.md` on the machine.
+Current rules are in [AGENTS.md](../AGENTS.md). Work on runtime, architecture, UI, verification, and new features is allowed when in scope; changes must be tested and reviewed. Use [docs/INDEX.md](INDEX.md) for current documentation.
