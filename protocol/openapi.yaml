@@ -1,0 +1,294 @@
+openapi: 3.0.3
+info:
+  title: NVCode Protocol
+  version: "0.1.0"
+  description: |
+    UI-independent localhost API for NVCode (Protocol v0).
+    Backend does not depend on Tkinter or any GUI.
+    Task creation goes only through intake (fail-closed).
+    Leases and workers are read-only.
+servers:
+  - url: http://127.0.0.1:8340
+    description: Default local bind (loopback only)
+paths:
+  /v1/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/status:
+    get:
+      summary: Queues, policy, root snapshot
+      operationId: getStatus
+      responses:
+        "200":
+          description: Status snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+  /v1/tasks:
+    get:
+      summary: List tasks
+      operationId: listTasks
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [incoming, processing, done, errors, deferred]
+        - name: channel
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        "200":
+          description: Task list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskListResponse"
+    post:
+      summary: Create task via intake
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTaskResponse"
+        "400":
+          description: Intake rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/tasks/{task_id}:
+    get:
+      summary: Get task snapshot
+      operationId: getTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task found or not found payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDetailResponse"
+  /v1/workers:
+    get:
+      summary: Workers (read-only, derived from leases)
+      operationId: listWorkers
+      responses:
+        "200":
+          description: Worker list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkersResponse"
+  /v1/leases:
+    get:
+      summary: Processing leases (read-only)
+      operationId: listLeases
+      responses:
+        "200":
+          description: Lease list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeasesResponse"
+  /v1/leases/{task_id}:
+    get:
+      summary: Lease for one task (read-only)
+      operationId: getLease
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Lease payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseDetailResponse"
+  /v1/metrics:
+    get:
+      summary: Metrics snapshot
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+  /v1/logs/tail:
+    get:
+      summary: Tail log lines (redacted)
+      operationId: getLogsTail
+      parameters:
+        - name: n
+          in: query
+          schema:
+            type: integer
+            default: 200
+            maximum: 2000
+      responses:
+        "200":
+          description: Log lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogsResponse"
+  /v1/events:
+    get:
+      summary: WebSocket event stream
+      operationId: eventsWebSocket
+      description: |
+        Upgrade to WebSocket. Server pushes Protocol v0 envelopes.
+      responses:
+        "101":
+          description: Switching Protocols
+  /v1/events/stream:
+    get:
+      summary: SSE event stream
+      operationId: eventsSSE
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+components:
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        service: { type: string }
+        version: { type: string }
+        protocol: { type: integer }
+        bind: { type: string }
+    StatusResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        root: { type: string }
+        queues: { type: object }
+        policy: { type: object }
+        desktop_queue: { type: integer }
+    TaskSummary:
+      type: object
+      properties:
+        task_id: { type: string }
+        channel: { type: string }
+        status: { type: string }
+        folder: { type: string }
+        worker_id: { type: string, nullable: true }
+        attempts: { type: integer, nullable: true }
+        message: { type: string }
+        verified: { nullable: true }
+        changed_files: { nullable: true }
+    TaskListResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskSummary" }
+        count: { type: integer }
+    CreateTaskRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        project: { type: string }
+        channel: { type: string, default: desktop }
+        recipe: { type: string }
+        metadata: { type: object }
+    CreateTaskResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        task_id: { type: string }
+        status: { type: string }
+    TaskDetailResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        task: { $ref: "#/components/schemas/TaskSummary" }
+        lease: { type: object, nullable: true }
+        error: { $ref: "#/components/schemas/ErrorBody" }
+    WorkersResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        workers:
+          type: array
+          items: { type: object }
+        count: { type: integer }
+    LeasesResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        leases:
+          type: array
+          items: { type: object }
+        count: { type: integer }
+    LeaseDetailResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        task_id: { type: string }
+        lease: { type: object, nullable: true }
+        error: { $ref: "#/components/schemas/ErrorBody" }
+    MetricsResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        metrics: { type: object }
+    LogsResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        lines:
+          type: array
+          items: { type: string }
+        count: { type: integer }
+    ErrorBody:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+    ErrorResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { $ref: "#/components/schemas/ErrorBody" }
