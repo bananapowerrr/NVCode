@@ -134,3 +134,18 @@ git diff --check
 ```
 
 The interactive demo and tests use only `nvcode_client` abstractions and public Protocol v0 shapes. They do not import `src/core/` or the legacy Tkinter application.
+
+
+## SDK packaging and end-to-end setup
+
+Install the SDK independently from the repository root:
+
+```bash
+python -m pip install -e ./nvcode_client
+```
+
+The standalone `pyproject.toml` has no third-party runtime dependencies. It exposes `nvcode-client-demo`, `nvcode-interactive-demo`, and `nvcode-app-shell` console entry points.
+
+For the complete backend + static debug UI + SDK + AppShell demo walkthrough, including packaging, thread-safety, live-mode side effects, and the final validation checklist, see [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md).
+
+The Protocol server also serves the static debug UI at `http://127.0.0.1:8340/` from `protocol/static/index.html`; there is no separate npm/Vite frontend server in the current repository layout. Start it with `PYTHONPATH=.:src python -m protocol.server --port 8340` from the repository root.
