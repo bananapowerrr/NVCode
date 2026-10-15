@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import hashlib, json, time
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable
 
 TERMINAL = {"DONE", "ERROR", "DEFERRED", "CANCELLED", "FAILED"}
 RANK = {"": 0, "PENDING": 1, "CLAIMED": 2, "PROCESSING": 3, "VERIFYING": 4}
@@ -41,6 +41,7 @@ class StateStore:
         self._generation = self._revision = 0
         self._entity_revision: dict[tuple[str, str], int] = {}
         self._seen: OrderedDict[str, float] = OrderedDict()
+        self._listeners: list[Callable[[dict[str, Any]], None]] = []
 
     @property
     def revision(self) -> int:
@@ -50,8 +51,30 @@ class StateStore:
         self._generation += 1
         return SyncTicket(self._generation, self._revision)
 
+    def subscribe(self, callback: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
+        """Subscribe to store changes; return an idempotent unsubscribe function."""
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        self._listeners.append(callback)
+        active = True
+        def unsubscribe():
+            nonlocal active
+            if active:
+                active = False
+                try: self._listeners.remove(callback)
+                except ValueError: pass
+        return unsubscribe
+
+    def _notify(self, kind: str, event: Mapping[str, Any] | None = None) -> None:
+        change = {"kind": kind, "revision": self._revision, "event": dict(event) if event else None}
+        for callback in tuple(self._listeners):
+            try: callback(change)
+            except Exception: continue
+
     def set_connection(self, state: str, error: str | None = None) -> None:
+        changed = self.state.connection != state or self.state.last_error != error
         self.state.connection, self.state.last_error = state, error
+        if changed: self._notify("connection")
 
     def _duplicate(self, event: Mapping[str, Any]) -> bool:
         eid = event.get("event_id") or event.get("id")
@@ -72,6 +95,7 @@ class StateStore:
             return False
         self._revision += 1
         EventReducer.reduce(self, event)
+        self._notify("event", event)
         return True
 
     def apply_snapshot(self, ticket: SyncTicket, *, status=None, tasks=None, workers=None,
@@ -107,6 +131,7 @@ class StateStore:
         if isinstance(metrics, Mapping):
             self.state.metrics = dict(metrics.get("metrics", metrics))
         self.state.last_sync_at = time.time()
+        self._notify("snapshot")
         return True
 
 class EventReducer:
