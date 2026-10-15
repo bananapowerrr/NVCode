@@ -126,7 +126,13 @@ class ProtocolHandler(BaseHTTPRequestHandler):
                 n = int((qs.get("n") or ["200"])[0])
             except ValueError:
                 n = 200
-            self._send_json(200, rh.logs_tail(n=n))
+            task_id = (qs.get("task_id") or qs.get("task") or [None])[0]
+            level = (qs.get("level") or [None])[0]
+            source = (qs.get("source") or [None])[0]
+            self._send_json(
+                200,
+                rh.logs_tail(n=n, task_id=task_id, level=level, source=source),
+            )
             return
         if path in ("/", "/index.html"):
             index = STATIC_DIR / "index.html"
