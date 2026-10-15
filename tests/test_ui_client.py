@@ -138,6 +138,7 @@ def test_chat_controller_filters_task_events_and_posts_to_v1_tasks():
     assert len(received) == 1
     store.apply_event({"type": "log.line", "ts": "b", "payload": {"task_id": "task-a", "text": "hello"}})
     assert len(received) == 2
+    assert received[-1]["events"][-1]["type"] == "log.line"
     result = controller.send_message("follow up")
     assert result["task_id"] == "new"
     assert posts == [("/v1/tasks", {"message": "follow up", "project": "", "channel": "desktop",
