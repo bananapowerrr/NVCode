@@ -9,11 +9,11 @@ Users need versioned desktop updates without Git/Python. Developers keep Git; en
 ```
 GitHub Releases (release.json + package.zip)
         ↓
-UpdateChecker (in AgentBus) — compare only
+UpdateChecker (in NVCode) — compare only
         ↓
 UI notification
         ↓
-[Update] → agentbus-updater (external)
+[Update] → nvcode-updater (external)
         ↓
 download → sha256 → stop app → backup → replace → start
         ↓ fail → rollback
@@ -23,13 +23,13 @@ download → sha256 → stop app → backup → replace → start
 
 | Keep (user) | Replace (app) |
 |-------------|----------------|
-| `%APPDATA%/AgentBus/config` | binaries / exe |
+| `existing %APPDATA%/AgentBus data (legacy path; migrate only with an explicit migration)` | binaries / exe |
 | projects, memory, history | bundled runtime |
 | credentials | UI, skills (shipped) |
 
 ## Phases
 
-- **A** Version + manifest schema (this doc + `app/version.py`, `release_manifest.py`)
+- **A** Version + manifest schema (this doc + `src/app/version.py`, `release_manifest.py`)
 - **B** UpdateChecker network fetch (optional later; offline compare exists)
 - **C** Chat/Settings “update available”
 - **D** updater.exe protocol (JSON args: urls, hashes, paths)

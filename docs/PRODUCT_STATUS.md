@@ -1,53 +1,52 @@
-# NVCode / AgentBus — статус продукта (offline)
+# NVCode — product status
 
-## Готово (каркас продукта)
+> This document is a status snapshot, not a substitute for running the current test suite, CI, or machine-level acceptance checks. Update evidence and date whenever status is re-audited.
 
-| Слой | Состояние |
-|------|-----------|
-| Core Runtime (FSM, intake, verify, executor, reclaim) | offline-hardened |
-| Application API (`src/app/*`) | Project / Tasks / Agent / Changes / Files / Workflow |
-| Progressive UX (профили, Report, ?, Agent popover) | baseline |
-| Layouts / palette / Project Center | baseline |
-| Feature flags / doctor / contracts docs | baseline |
-| Regression tests | большой suite (не «временный мусор») |
+## Product identity
 
-## Главный инвариант
+- Product name: **NVCode**
+- Repository: `bananapowerrr/NVCode`
+- Primary development source: GitHub repository and its reviewed branches / pull requests.
+- Legacy implementation names: `AgentBus`, `AGENTBUS_*`, and `.agentbus/` remain in parts of the codebase and require a planned compatibility migration.
 
-Intelligence предлагает → Runtime решает → Verify закрывает DONE.
+## Product workflow
 
-## Цикл пользователя
+```
+User request → task intake → runtime / worker → verification → result + diff → user review
+```
 
-вводные → работа агента → verify → Report → Continue / Review / Undo
+The runtime and verification layers are responsible for execution state and evidence. Planning and language-model output are not, by themselves, proof that a change was applied correctly.
 
-Task DONE ≠ Project READY.
+## Areas to validate
 
-## Сделано в product-polish (offline)
+| Area | What to verify |
+|---|---|
+| Runtime and task lifecycle | State transitions, retries, error handling, recovery |
+| Worker integration | Provider configuration, process lifetime, timeout behavior |
+| Verification | Required checks, failure propagation, false-success prevention |
+| Desktop UI | Task creation, status visibility, diff/review workflow |
+| Configuration | Defaults, feature flags, localization parity |
+| Packaging and updates | Build reproducibility, manifest/hash validation, rollback behavior |
+| Documentation | Links, commands, current module paths, no stale source-of-truth instructions |
 
-- [x] First-run wizard + profile + Health/Suggest briefing
-- [x] Settings → вкладка Agent (те же профили)
-- [x] Composer UI + Ctrl+K
-- [x] Changes → Undo
-- [x] GETTING_STARTED.md + README
-- [x] Progressive tabs (beginner)
-- [x] Footer + Agent label
-- [x] AppFacade + soft panel refresh
-- [x] Empty states queue/history/changes
+## Required evidence before a release
 
-## Что ещё можно шлифовать (низкий риск)
+- Relevant unit and integration tests pass.
+- CI for the candidate commit is green.
+- Build and packaging checks pass where supported.
+- Machine-level worker scenarios have been run and their results recorded.
+- User data migration and legacy configuration compatibility are checked for any rename affecting paths or environment variables.
+- Release notes and documentation match the actual candidate.
 
-1. Больше панелей только через AppFacade (единый стиль ошибок).
-2. Скрытие Metrics для beginner (опционально).
-3. Toast при DONE согласован с Report.
-4. Полный EN-проход всех старых строк UI.
+## Current status
 
-## Что сознательно отложено до машины
+No new full-suite or live-machine test run is claimed by this documentation update. Consult the current GitHub Actions results and record the latest local test evidence before assigning a release status.
 
-Ollama/Aider live, parallel workers, MCP, embeddings RAG, autopilot night load.
+## Related documents
 
-## Entry
-
-- `python dispatcher.py` — runtime
-- `python dispatcher_ui.py` / `python -m ui.main_window` — desktop
-- `python dispatcher.py --doctor` — окружение
-
-См. также: [GETTING_STARTED.md](GETTING_STARTED.md).
+- [Getting started](GETTING_STARTED.md)
+- [Structure](STRUCTURE.md)
+- [Contracts](CONTRACTS.md)
+- [Live runbook](LIVE_RUNBOOK.md)
+- [Technical debt registry](TECHNICAL_DEBT_REGISTRY.md)
+- [Cleanup report](CLEANUP_REPORT.md)

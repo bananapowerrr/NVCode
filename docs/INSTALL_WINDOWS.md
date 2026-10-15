@@ -1,37 +1,37 @@
-# Установка на Windows
+# Установка NVCode на Windows
 
 ## Быстрый старт (Python)
 
-1. Установите Python 3.11+ с python.org (галочка PATH).
-2. Скопируйте папку AgentBus.
-3. В cmd:
+1. Установите Python 3.11+ с python.org и включите добавление Python в PATH.
+2. Склонируйте репозиторий NVCode или скачайте его архив.
+3. Откройте cmd или PowerShell в каталоге репозитория:
 
 ```bat
-cd AgentBus
 python -m venv .venv
 .venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install -r requirements-ui.txt
 python dispatcher.py --init
 python dispatcher.py --doctor
 ```
 
-Ищи строку: `VERDICT: МОЖНО СТАРТОВАТЬ`.
-
-4. Запуск:
+## Запуск
 
 ```bat
 python dispatcher.py
 python dispatcher_ui.py
 ```
 
-или двойной клик: `scripts\start_all.bat`, `scripts\start_ui.bat`.
+Или проверьте скрипт `scripts\start_all.bat`.
 
-## Ollama (локально, 0 ₽)
+## Ollama (опционально)
 
 ```bat
 ollama pull qwen2.5-coder:7b
-ollama pull qwen2.5:1.5b-instruct
 ```
+
+Подберите модель под доступную память и скорость компьютера. Наличие модели не гарантирует, что worker настроен правильно.
 
 ## Сборка .exe (опционально)
 
@@ -40,11 +40,8 @@ pip install pyinstaller
 python scripts\build_exe.py
 ```
 
-Появятся `dist\AgentBusUI.exe` и `dist\AgentBus.exe`.  
-Для воркеров по-прежнему нужны Ollama/Aider в системе (exe — оболочка UI/CLI).
+Ожидаемые имена сборки: `dist\NVCodeUI.exe` и `dist\NVCode.exe`. Проверьте фактический результат сборки; worker-инструменты могут требовать отдельной установки.
 
-## Политика
+## Документация
 
-- Чат на ПК — главный канал задач.
-- Телефонный file-bus — опция в настройках.
-- `local_only` в policy — без облака.
+Начните с [общего индекса](INDEX.md) и [Getting Started](GETTING_STARTED.md).

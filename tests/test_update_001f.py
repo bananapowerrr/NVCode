@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import subprocess
+import zipfile
 import sys
 from pathlib import Path
 
@@ -19,6 +20,16 @@ def test_build_release_script(tmp_path: Path):
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
+    # The updater replaces the install tree; ensure launchers and recipes ship.
+    zip_path = out / "NVCode-0.10.99-src.zip"
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = set(zf.namelist())
+    prefix = "NVCode-0.10.99/"
+    assert prefix + "dispatcher.py" in names
+    assert prefix + "dispatcher_ui.py" in names
+    assert prefix + "admin_ui.py" in names
+    assert any(name.startswith(prefix + "recipes/") for name in names)
+
     # manifest
     manifest_path = out / "release.json"
     # script may write relative to repo_root/dist
