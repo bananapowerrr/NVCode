@@ -45,6 +45,7 @@ def health() -> dict[str, Any]:
 
 
 def status() -> dict[str, Any]:
+    """Backend snapshot. Existing fields kept; additive `diagnostics` block."""
     root = _project_root()
     data: dict[str, Any] = {"ok": True, "root": str(root), "queues": {}, "policy": {}, "runtimes": []}
     try:
@@ -55,12 +56,18 @@ def status() -> dict[str, Any]:
         data["desktop_queue"] = 0
         data["queues_error"] = str(e)[:200]
     ch_root = _channels_root(root)
+    totals = {"incoming": 0, "processing": 0, "done": 0, "errors": 0, "deferred": 0, "quarantine": 0}
     if ch_root.is_dir():
         for ch in sorted(p.name for p in ch_root.iterdir() if p.is_dir()):
             counts: dict[str, int] = {}
             for name in ("incoming", "processing", "done", "errors", "deferred", "quarantine"):
                 d = ch_root / ch / name
-                counts[name] = len(list(d.glob("*.json"))) if d.is_dir() else 0
+                if d.is_dir():
+                    n = sum(1 for f in d.glob("*.json") if not f.name.endswith(".lease.json"))
+                else:
+                    n = 0
+                counts[name] = n
+                totals[name] = totals.get(name, 0) + n
             data["queues"][ch] = counts
     try:
         from core.policy import load_policy
@@ -72,6 +79,25 @@ def status() -> dict[str, Any]:
         }
     except Exception:
         pass
+
+    leases = list_leases()
+    workers = list_workers()
+    lease_count = int(leases.get("count") or 0)
+    worker_count = int(workers.get("count") or 0)
+    active = int(totals.get("incoming", 0)) + int(totals.get("processing", 0))
+    data["diagnostics"] = {
+        "active_tasks": active,
+        "incoming": int(totals.get("incoming", 0)),
+        "processing": int(totals.get("processing", 0)),
+        "done": int(totals.get("done", 0)),
+        "errors": int(totals.get("errors", 0)),
+        "deferred": int(totals.get("deferred", 0)),
+        "quarantine": int(totals.get("quarantine", 0)),
+        "leases": lease_count,
+        "workers_busy": worker_count,
+        "lease_store": "processing/*.lease.json",
+        "protocol": "v0",
+    }
     return data
 
 
@@ -88,6 +114,8 @@ def _iter_task_files(state: str | None = None, channel: str | None = None):
             if not d.is_dir():
                 continue
             for p in sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+                if p.name.endswith(".lease.json"):
+                    continue
                 out.append((ch, st, p))
     return out
 
