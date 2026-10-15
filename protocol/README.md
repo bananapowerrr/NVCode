@@ -19,4 +19,14 @@ PYTHONPATH=.:src python -m protocol.server --port 8340
 
 See `protocol/openapi.yaml` (OpenAPI 3).
 
+## CLI client
+
+```bash
+PYTHONPATH=.:src python -m protocol.client --base http://127.0.0.1:8340 health
+PYTHONPATH=.:src python -m protocol.client submit "Fix the bug"
+PYTHONPATH=.:src python -m protocol.client tasks
+PYTHONPATH=.:src python -m protocol.client logs --n 50
+PYTHONPATH=.:src python -m protocol.client watch --max-events 5
+```
+
 Does not modify core/reclaim/executor/Tkinter.
