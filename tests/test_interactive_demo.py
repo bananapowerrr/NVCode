@@ -55,3 +55,22 @@ def test_interactive_demo_mock_task_submission_emits_task_created():
     assert events[0]["type"] == "task.created"
     assert events[0]["payload"]["message"] == "hello"
     socket.close()
+
+
+def test_client_package_has_no_backend_or_legacy_gui_imports():
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[1] / "nvcode_client"
+    forbidden = ("core", "src.core", "tkinter", "customtkinter")
+    for source in package.glob("*.py"):
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        assert not [name for name in imported if any(
+            name == prefix or name.startswith(prefix + ".") for prefix in forbidden
+        )], f"forbidden backend/legacy import in {source.name}"
