@@ -34,4 +34,8 @@ if [[ "${AGENTBUS_CI_EXECUTOR:-0}" == "1" ]]; then
   python -m pytest -q tests/test_executor_hardening.py --tb=line
 fi
 
+# Protocol v0 SDK end-to-end smoke (no core mutation)
+echo "== protocol SDK smoke =="
+PYTHONPATH=.:src python scripts/smoke_protocol_sdk.py
+
 echo "== OK (offline smoke checks passed) =="
