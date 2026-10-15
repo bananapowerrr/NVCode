@@ -3,6 +3,7 @@
 
   python -m protocol.server
   → http://127.0.0.1:8340/v1/health
+  → http://127.0.0.1:8340/  (debug UI)
 
 WebSocket: optional upgrade on GET /v1/events (minimal text frames).
 SSE fallback: GET /v1/events/stream
@@ -14,6 +15,7 @@ import base64
 import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -23,6 +25,7 @@ from protocol.envelope import make_envelope
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8340
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def _json_bytes(obj: Any) -> bytes:
@@ -54,6 +57,19 @@ class ProtocolHandler(BaseHTTPRequestHandler):
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    def _send_file(self, path: Path, content_type: str) -> None:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            self._send_json(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": str(path.name)}})>
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -112,6 +128,29 @@ class ProtocolHandler(BaseHTTPRequestHandler):
                 n = 200
             self._send_json(200, rh.logs_tail(n=n))
             return
+        if path in ("/", "/index.html"):
+            index = STATIC_DIR / "index.html"
+            if index.is_file():
+                self._send_file(index, "text/html; charset=utf-8")
+                return
+        if path.startswith("/static/"):
+            rel = path[len("/static/"):]
+            candidate = (STATIC_DIR / rel).resolve()
+            try:
+                candidate.relative_to(STATIC_DIR.resolve())
+            except ValueError:
+                self._send_json(403, {"ok": False, "error": {"code": "FORBIDDEN", "message": "path"}})
+                return
+            if candidate.is_file():
+                ctype = "application/octet-stream"
+                if candidate.suffix == ".html":
+                    ctype = "text/html; charset=utf-8"
+                elif candidate.suffix == ".js":
+                    ctype = "application/javascript; charset=utf-8"
+                elif candidate.suffix == ".css":
+                    ctype = "text/css; charset=utf-8"
+                self._send_file(candidate, ctype)
+                return
         self._send_json(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": path}})
 
     def do_POST(self) -> None:
