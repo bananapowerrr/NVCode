@@ -24,7 +24,7 @@ paths:
                 $ref: "#/components/schemas/HealthResponse"
   /v1/status:
     get:
-      summary: Queues, policy, root snapshot
+      summary: Queues, policy, root snapshot + diagnostics
       operationId: getStatus
       responses:
         "200":
@@ -240,6 +240,10 @@ components:
         queues: { type: object }
         policy: { type: object }
         desktop_queue: { type: integer }
+        diagnostics:
+          type: object
+          description: Additive backend summary (active tasks, leases, workers)
+          additionalProperties: true
     TaskSummary:
       type: object
       properties:
