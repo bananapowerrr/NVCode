@@ -226,32 +226,15 @@ def metrics() -> dict[str, Any]:
         return {"ok": True, "metrics": {"counters": {}}, "note": str(e)[:120]}
 
 
-def logs_tail(n: int = 200) -> dict[str, Any]:
-    n = max(1, min(int(n or 200), 2000))
-    root = _project_root()
-    candidates = [root / "logs" / "runtime.log", root / "logs" / "agentbus.log", root / "channels" / "desktop" / "logs"]
-    lines: list[str] = []
-    for c in candidates:
-        if c.is_file():
-            try:
-                text = c.read_text(encoding="utf-8", errors="replace").splitlines()
-                lines = text[-n:]
-                break
-            except Exception:
-                continue
-        if c.is_dir():
-            logs = sorted(c.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if logs:
-                try:
-                    lines = logs[0].read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
-                    break
-                except Exception:
-                    pass
-    redacted = []
-    for line in lines:
-        low = line.lower()
-        if "api_key" in low or "password" in low or "secret" in low:
-            redacted.append("[redacted]")
-        else:
-            redacted.append(line[:2000])
-    return {"ok": True, "lines": redacted, "count": len(redacted)}
+def logs_tail(
+    n: int = 200,
+    *,
+    task_id: str | None = None,
+    level: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    from protocol.log_filters import filter_logs_tail
+
+    return filter_logs_tail(
+        _project_root(), n=n, task_id=task_id, level=level, source=source
+    )
