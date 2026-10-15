@@ -85,3 +85,28 @@ git diff --check
 ```
 
 The test suite uses an injected client and deterministic fake event loop, so it does not require a live server or create real tasks.
+
+
+## Interactive terminal demo
+
+Run the AppShell-based interactive frontend in safe mock mode:
+
+```bash
+python -m nvcode_client.interactive_demo
+```
+
+The main thread drains the same UI dispatcher used by graphical frontends while a separate input reader waits for commands. All controller snapshots therefore pass through the AppShell dispatcher before being rendered. Use `tasks`, `workers`, and `logs` to inspect panel projections; `submit <message>` to exercise task intake; and `simulate` to produce mock task, worker, log, and metric events. This mode does not need a server and cannot create real work.
+
+For a live server, opt in with:
+
+```bash
+python -m nvcode_client.interactive_demo --live
+```
+
+Optional `--base-url`, `--ws-url`, and `--chat-task-id` arguments select the Protocol v0 endpoints and task observed by the chat panel. In live mode, the `submit` command sends a real `POST /v1/tasks` request. Use this only when creating a real task is intended.
+
+Automated mock-flow coverage:
+
+```bash
+python -m pytest -q tests/test_interactive_demo.py tests/test_app_shell.py
+```

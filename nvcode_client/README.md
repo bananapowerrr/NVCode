@@ -61,21 +61,21 @@ logs.subscribe(render_logs_and_metrics)
 - `LogsMetricsController` supports optional exact filters for `level`, `source` (or `worker_id`), and `task_id`; metric updates are emitted alongside the filtered log list.
 - Subscriber exceptions are isolated so a broken view cannot interrupt reducers or other listeners. StateStore notifications are synchronous on the thread that processes the event; UI frameworks must dispatch rendering onto their own UI thread when required.
 
-## Owner verification for PR #3
+## Owner verification for the AppShell / interactive-demo change
 
-From a clean checkout of the PR branch:
+This is a stacked client-layer change based on `feat/ui-app-shell`. In a clean checkout:
 
 ```bash
 git fetch origin
-git switch --detach origin/feat/ui-000-protocol-client
+git switch --detach origin/feat/ui-interactive-appshell-demo
 python -m compileall -q nvcode_client tests
-python -m pytest -q tests/test_ui_client.py
+python -m pytest -q tests/test_interactive_demo.py tests/test_app_shell.py
 python -m pytest -q
-git diff --check origin/main...HEAD
-git diff --name-only origin/main...HEAD
+git diff --check origin/feat/ui-app-shell...HEAD
+git diff --name-only origin/feat/ui-app-shell...HEAD
 ```
 
-Expected changed paths for this UI work are limited to `nvcode_client/` and `tests/test_ui_client.py`. Verify the diff contains no `src/core/` files or legacy Tkinter changes. Do not mark the PR ready to merge until the targeted and repository-wide suites both exit 0 in the same checkout.
+The intended diff is limited to `nvcode_client/interactive_demo.py`, client documentation, and `tests/test_interactive_demo.py`. Confirm no `src/core/` files or legacy Tkinter files are changed. Run the targeted and repository-wide suites in the same checkout before merging. Because this branch depends on the AppShell stack, merge/rebase onto `main` only after the owner confirms the base PRs are present there, then rerun validation.
 
 
 ## Reference integration demo
@@ -97,3 +97,40 @@ python -m nvcode_client.demo --live --task-id TASK_ID
 ```
 
 The live example submits a real task, so use it only when that is intended. `--base-url` and `--ws-url` can override the local endpoints.
+
+
+## Interactive terminal demo (AppShell)
+
+The interactive demo is the recommended hands-on exercise for the full client stack. It uses `AppShell`, the UI-thread dispatcher, view-model projections, and all four panel controllers.
+
+Safe mock mode (default; no server and no real task submission):
+
+```bash
+python -m nvcode_client.interactive_demo
+```
+
+Commands available in the prompt:
+
+- `status`, `tasks`, `workers`, `logs` — inspect the current panel snapshots.
+- `submit <message>` — exercise the public task-intake contract against the mock.
+- `simulate` — emit mock task status/terminal, worker busy/ready, log, and metric events.
+- `help`, `quit` — show commands or close the client.
+
+To connect to a running Protocol v0 server, opt in explicitly:
+
+```bash
+python -m nvcode_client.interactive_demo --live
+python -m nvcode_client.interactive_demo --live --chat-task-id TASK_ID
+```
+
+Use `--base-url URL` and `--ws-url URL` to override the server endpoints. In live mode, `submit <message>` creates real work through `POST /v1/tasks`; only run it when intended. The terminal input reader runs separately from the main-thread UI callback pump so incoming controller updates continue to render while waiting for input.
+
+Validation:
+
+```bash
+python -m pytest -q tests/test_interactive_demo.py tests/test_app_shell.py
+python -m pytest -q
+git diff --check
+```
+
+The interactive demo and tests use only `nvcode_client` abstractions and public Protocol v0 shapes. They do not import `src/core/` or the legacy Tkinter application.
