@@ -67,8 +67,7 @@ From a clean checkout of the PR branch:
 
 ```bash
 git fetch origin
-git switch feat/ui-000-protocol-client
-git pull --ff-only origin feat/ui-000-protocol-client
+git switch --detach origin/feat/ui-000-protocol-client
 python -m compileall -q nvcode_client tests
 python -m pytest -q tests/test_ui_client.py
 python -m pytest -q
