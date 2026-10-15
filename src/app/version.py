@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AgentBus application version (UPDATE-001A).
+"""NVCode application version (UPDATE-001A).
 
 Single source of truth for current build. UpdateChecker compares this
 to GitHub Releases manifest — does not self-replace the running app.
@@ -10,7 +10,7 @@ from typing import Any
 
 # Semver: MAJOR.MINOR.PATCH[+build]
 __version__ = "0.10.0-dev"
-APP_NAME = "AgentBus"
+APP_NAME = "NVCode"
 CHANNEL_DEFAULT = "stable"  # stable | beta
 
 

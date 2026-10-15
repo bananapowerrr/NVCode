@@ -1,30 +1,23 @@
 # docs/archive — historical materials only
 
-**HISTORICAL — DO NOT USE AS CURRENT ARCHITECTURE.**
+**HISTORICAL — do not use this folder as the current architecture or workflow source.**
 
-These files are audit snapshots, FC story notes, handoffs, and offline status
-from past development sessions. They may describe modules that were renamed,
-split, or removed.
+These files are audit snapshots, development handoffs, dated status reports, and notes from earlier iterations. They may mention modules, names, or workflows that have since changed or been removed.
 
-## Rules for humans and AI agents
+## Current source of truth
 
-1. **Source of truth** for architecture is **not** this folder.
-2. Use instead:
-   - `docs/NVCODE_ARCHITECTURE.md`
-   - `docs/ARCHITECTURE_INVENTORY.md`
-   - `docs/STRUCTURE.md`
-   - `docs/CONTRACTS.md`
-   - `docs/INDEX.md`
-3. Do **not** implement features solely because an archive FC doc mentions them.
-4. Do **not** treat `dead_code/` as importable product modules.
+- Product overview and setup: [root README](../../README.md), [Getting Started](../GETTING_STARTED.md)
+- Current document map: [docs/INDEX.md](../INDEX.md)
+- Current repository structure: [docs/STRUCTURE.md](../STRUCTURE.md)
+- Current task/runtime contracts: [docs/CONTRACTS.md](../CONTRACTS.md)
+- Current live checks: [docs/LIVE_RUNBOOK.md](../LIVE_RUNBOOK.md)
 
-## Contents (groups)
+## Rules for readers and agents
 
-| Group | Examples |
-|-------|----------|
-| FC narratives | `FC26_*.md` … `FC44_*.md` |
-| Audits / handoffs | `AUDIT_*`, `HANDOFF_*` |
-| Status snapshots | `STATUS_OFFLINE.md`, `SYNC_STATUS.md` |
-| Dead Python (zero refs) | `dead_code/cfg_builder.py`, `dead_code/updater.py` |
+1. Read the current source code and current documents before applying an old recommendation.
+2. Do not implement features solely because an archived handoff mentions them.
+3. Do not treat historical dead-code lists as proof that a module is still unused.
+4. Treat old Drive-sync notes and freeze plans as retired unless explicitly reactivated in a current issue.
+5. Keep historical documents for provenance; do not list them as active onboarding material.
 
-When in doubt: **read the current code under `src/`**, not archive markdown.
+The product name is **NVCode**. Older documents may still use AgentBus as the former product name or refer to compatibility identifiers.

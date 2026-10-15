@@ -7,9 +7,9 @@ python scripts/build_release.py --version 0.10.1 --out dist
 ```
 
 Outputs:
-- `dist/AgentBus-0.10.1-src.zip`
+- `dist/NVCode-0.10.1-src.zip`
 - `dist/release.json` (UpdateChecker manifest)
-- `dist/AgentBus-0.10.1-src.zip.sha256`
+- `dist/NVCode-0.10.1-src.zip.sha256`
 
 ## CI
 
@@ -18,7 +18,7 @@ Tag push `v0.10.1` → workflow `.github/workflows/release.yml`:
 2. GitHub Release with assets
 
 UpdateChecker default URL:
-`https://github.com/bananapowerrr/Dispatcher/releases/latest/download/release.json`
+`https://github.com/bananapowerrr/NVCode/releases/latest/download/release.json`
 
 ## Notes
 

@@ -20,7 +20,7 @@ PROTECTED = frozenset()  # flags only — bus/runtime are not flags
 class AdminWindow(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("AgentBus Admin — modules & flags")
+        self.title("NVCode Admin — modules & flags")
         self.geometry("720x640")
         ensure_sys_path()
 

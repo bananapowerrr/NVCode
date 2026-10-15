@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="${ROOT}/src:${ROOT}:${PYTHONPATH:-}"
 
-echo "== AgentBus CI smoke =="
+echo "== NVCode CI smoke =="
 echo "ROOT=$ROOT"
 
 python scripts/smoke_offline.py
@@ -34,4 +34,4 @@ if [[ "${AGENTBUS_CI_EXECUTOR:-0}" == "1" ]]; then
   python -m pytest -q tests/test_executor_hardening.py --tb=line
 fi
 
-echo "== OK (0.10-alpha offline CI) =="
+echo "== OK (offline smoke checks passed) =="

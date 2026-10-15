@@ -1,4 +1,4 @@
-"""AgentBus CLI entry."""
+"""NVCode CLI entry."""
 from __future__ import annotations
 from typing import Any
 
