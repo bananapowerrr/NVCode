@@ -97,3 +97,40 @@ python -m nvcode_client.demo --live --task-id TASK_ID
 ```
 
 The live example submits a real task, so use it only when that is intended. `--base-url` and `--ws-url` can override the local endpoints.
+
+
+## Interactive terminal demo (AppShell)
+
+The interactive demo is the recommended hands-on exercise for the full client stack. It uses `AppShell`, the UI-thread dispatcher, view-model projections, and all four panel controllers.
+
+Safe mock mode (default; no server and no real task submission):
+
+```bash
+python -m nvcode_client.interactive_demo
+```
+
+Commands available in the prompt:
+
+- `status`, `tasks`, `workers`, `logs` — inspect the current panel snapshots.
+- `submit <message>` — exercise the public task-intake contract against the mock.
+- `simulate` — emit mock task status/terminal, worker busy/ready, log, and metric events.
+- `help`, `quit` — show commands or close the client.
+
+To connect to a running Protocol v0 server, opt in explicitly:
+
+```bash
+python -m nvcode_client.interactive_demo --live
+python -m nvcode_client.interactive_demo --live --chat-task-id TASK_ID
+```
+
+Use `--base-url URL` and `--ws-url URL` to override the server endpoints. In live mode, `submit <message>` creates real work through `POST /v1/tasks`; only run it when intended. The terminal input reader runs separately from the main-thread UI callback pump so incoming controller updates continue to render while waiting for input.
+
+Validation:
+
+```bash
+python -m pytest -q tests/test_interactive_demo.py tests/test_app_shell.py
+python -m pytest -q
+git diff --check
+```
+
+The interactive demo and tests use only `nvcode_client` abstractions and public Protocol v0 shapes. They do not import `src/core/` or the legacy Tkinter application.
