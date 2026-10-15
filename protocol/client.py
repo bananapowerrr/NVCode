@@ -3,12 +3,9 @@
 
 Examples:
   python -m protocol.client health
-  python -m protocol.client status
-  python -m protocol.client tasks
   python -m protocol.client submit "Fix the bug"
-  python -m protocol.client logs --n 50
-  python -m protocol.client metrics
-  python -m protocol.client watch --sse
+  python -m protocol.client cancel <task_id>
+  python -m protocol.client watch --max-events 5
 """
 from __future__ import annotations
 
@@ -97,6 +94,12 @@ class ProtocolClient:
         if recipe:
             body["recipe"] = recipe
         return self.post_json("/v1/tasks", body)
+
+    def cancel(self, task_id: str, *, reason: str = "") -> tuple[int, dict[str, Any]]:
+        body: dict[str, Any] = {}
+        if reason:
+            body["reason"] = reason
+        return self.post_json(f"/v1/tasks/{urllib.parse.quote(task_id)}/cancel", body)
 
     def metrics(self) -> dict[str, Any]:
         return self.get_json("/v1/metrics")
@@ -194,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--channel", default="desktop")
     s.add_argument("--recipe", default="")
 
+    c = sub.add_parser("cancel", help="POST /v1/tasks/{id}/cancel")
+    c.add_argument("task_id")
+    c.add_argument("--reason", default="")
+
     lg = sub.add_parser("logs", help="GET /v1/logs/tail")
     lg.add_argument("--n", type=int, default=100)
 
@@ -218,6 +225,10 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(client.list_tasks(state=args.state, channel=args.channel, limit=args.limit))
         elif args.cmd == "task":
             _print_json(client.get_task(args.task_id))
+        elif args.cmd == "cancel":
+            code, body = client.cancel(args.task_id, reason=args.reason)
+            _print_json(body)
+            return 0 if code == 200 and body.get("ok") else 1
         elif args.cmd == "submit":
             code, body = client.submit(
                 args.message, project=args.project, channel=args.channel, recipe=args.recipe
