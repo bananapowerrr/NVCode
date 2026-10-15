@@ -1,96 +1,77 @@
-# AgentBus
+# NVCode
 
-Локальный AI-помощник для кода (Ollama / LM Studio). Без обязательной облачной подписки.
-
-**Главный канал — чат на ПК.** Очередь `channels/` для телефона — опционально (`phone_filebus`).
+**NVCode** — локальная AI-среда разработки: desktop-чат, coding workers, инструменты проекта и проверка результатов. Локальные провайдеры Ollama / LM Studio поддерживаются; облачные провайдеры могут подключаться отдельно.
 
 ## Быстрый старт
+
+Требуется Python 3.11+.
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -r requirements-ui.txt   # GUI
-# или: python scripts/bootstrap.py
+pip install -r requirements-ui.txt   # desktop UI
+# альтернативно: python scripts/bootstrap.py
 
 python dispatcher.py --init
 python dispatcher.py --doctor
-bash scripts/ci_smoke.sh          # offline CI (mock + tests)
-
-python dispatcher.py          # движок (терминал 1)
-python dispatcher_ui.py       # чат (терминал 2)
+bash scripts/ci_smoke.sh
 ```
 
-Windows: `scripts/start_ui.bat`, `scripts/start_doctor.bat`  
-Модель: `ollama pull qwen2.5-coder:7b`
+Запуск приложения в двух терминалах:
+
+```bash
+python dispatcher.py
+python dispatcher_ui.py
+```
+
+Windows: `scripts/start_all.bat`, `scripts/start_ui.bat`, `scripts/start_doctor.bat`.
+
+Для локального coding worker на Ollama можно начать с модели `qwen2.5-coder:7b`:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
 
 ## CLI
 
-| | |
-|--|--|
-| `--init` | Ollama / LM Studio, policy |
-| `--doctor` | диагностика |
-| `--dashboard` | http://127.0.0.1:8337 |
-| `--recipe NAME --target PATH` | рецепт |
-| `--version` | версия |
+| Команда | Назначение |
+|---|---|
+| `python dispatcher.py --init` | Инициализация окружения |
+| `python dispatcher.py --doctor` | Диагностика |
+| `python dispatcher.py --dashboard` | Локальная панель состояния |
+| `python dispatcher.py --recipe NAME --target PATH` | Запуск рецепта |
+| `python dispatcher.py --version` | Версия |
 
-## Поток
+## Как устроен рабочий цикл
 
 ```
-Чат → .agentbus/desktop_queue/ → Runtime → channels/desktop/done → чат
+Запрос → очередь задач → runtime / worker → проверки → результат и diff
 ```
 
-Политика: `config/policy.yaml` → `local_only` | `balanced` | `quality` | `cheap`
+Главный принцип: **worker предлагает изменения, runtime управляет выполнением, verification подтверждает результат**. Успешное завершение отдельной задачи не означает автоматически, что весь проект готов к релизу.
 
 ## Документация
 
-См. **[docs/INDEX.md](docs/INDEX.md)** — онбординг, структура, каналы, API, флаги, UI, troubleshooting.
+Начните с **[документационного индекса](docs/INDEX.md)**. Там находятся инструкции по установке, архитектуре, проверкам, релизу и текущему техническому долгу.
 
-Пошагово до live: **[docs/LAUNCH.md](docs/LAUNCH.md)**.
+- [Getting started](docs/GETTING_STARTED.md)
+- [Структура репозитория](docs/STRUCTURE.md)
+- [Контракты](docs/CONTRACTS.md)
+- [Live runbook](docs/LIVE_RUNBOOK.md)
+- [Статус продукта](docs/PRODUCT_STATUS.md)
+- [Текущий аудит и очистка](docs/CLEANUP_REPORT.md)
 
-## Корень проекта
+## Разработка и проверка
 
-Только точки входа и метаданные пакета. Код — в `src/`, подробности — в `docs/STRUCTURE.md`.
-
-## Windows package (опционально)
-
-```bash
-pip install pyinstaller
-python scripts/build_exe.py
-# dist/AgentBusUI.exe + dist/AgentBus.exe
-```
-
-Или без сборки: `scripts/start_all.bat` (dispatcher + UI).
-
-## Контракты ядра (кратко)
-
-**Очередь:** чат → `.agentbus/desktop_queue/` → Runtime → `channels/desktop/{done,errors}`.
-
-**Состояния задачи:**
-```
-PENDING → CLAIMED → PROCESSING → VERIFYING → DONE
-              ↘ ERROR / DEFERRED → CLAIMED (retry)
-DONE = terminal
-```
-
-**DONE** только после успешного verify (исключения: cache hit / skill success).
-Пустой pytest (`collected 0`) → **false_DONE**, не успех.
-
-**Task Contract:** `core.task_contract` валидирует JSON до runtime.
-
-**VerificationEngine:** единый отчёт checks → `gate_done`.
-
-**Идентичность задачи:** `core.dedupe.task_fingerprint` (без id/attempts/worker).
-
-**Пресет старта:** `AGENTBUS_FEATURE_PRESET=beginner_ru` (local-first, без phone_filebus).
-
-**Аудит перед релизом:**
 ```bash
 python scripts/project_audit.py
-python scripts/project_audit.py --pytest
+python -m pytest -q
 ```
 
-### Composer
+Для проверки перед релизом используйте runbook и CI-конфигурацию репозитория. Если проверка не запускалась в текущей среде, не считайте её пройденной.
 
-`Ctrl+K` → **Composer — новая задача** — явная форма (очередь, не прямой worker).
+## Название и совместимость
+
+Текущее название продукта — **NVCode**. Название AgentBus осталось в некоторых внутренних идентификаторах, переменных окружения и путях данных; их следует мигрировать отдельно с проверкой совместимости, а не массовой заменой текста.

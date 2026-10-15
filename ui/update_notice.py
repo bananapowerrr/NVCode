@@ -31,14 +31,14 @@ def status_line(check: dict[str, Any] | None) -> str:
     c = dict(check or {})
     cur = c.get("current") or "?"
     if c.get("error") == "offline":
-        return f"AgentBus {cur} · offline (проверка отключена)"
+        return f"NVCode {cur} · offline (проверка отключена)"
     if c.get("error") and not c.get("manifest_ok"):
-        return f"AgentBus {cur} · проверка: {c.get('error')}"
+        return f"NVCode {cur} · проверка: {c.get('error')}"
     if c.get("update_available"):
-        return f"AgentBus {cur} → доступна {c.get('latest')}"
+        return f"NVCode {cur} → доступна {c.get('latest')}"
     if c.get("manifest_ok"):
-        return f"AgentBus {cur} · актуально"
-    return f"AgentBus {cur}"
+        return f"NVCode {cur} · актуально"
+    return f"NVCode {cur}"
 
 
 def should_show_chat_banner(check: dict[str, Any] | None) -> bool:

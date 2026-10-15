@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""UPDATE-001F: build AgentBus release package + release.json manifest.
+"""UPDATE-001F: build NVCode release package + release.json manifest.
 
 Usage:
   python scripts/build_release.py --version 0.10.1 --out dist/
 
 Creates:
-  dist/AgentBus-<version>-src.zip   (source/app tree for now)
+  dist/NVCode-<version>-src.zip   (source/app tree for now)
   dist/release.json                 (manifest for UpdateChecker)
 
 Does not publish to GitHub — CI workflow does that on tag push.
@@ -26,9 +26,13 @@ INCLUDE_GLOBS = [
     "src/**/*",
     "ui/**/*",
     "app/**/*",
+    "recipes/**/*",
     "scripts/agentbus_updater.py",
     "config/**/*",
     "requirements*.txt",
+    "dispatcher.py",
+    "dispatcher_ui.py",
+    "admin_ui.py",
     "README.md",
     "pyproject.toml",
     "setup.py",
@@ -44,6 +48,8 @@ EXCLUDE_PARTS = {
     "dist",
     ".agentbus_backup",
     ".agentbus_staging",
+    ".nvcode_backup",
+    ".nvcode_staging",
 }
 
 
@@ -58,11 +64,19 @@ def should_include(path: Path, root: Path) -> bool:
         return False
     if path.is_dir():
         return False
-    # match coarse include: under src/ui/app/scripts/config or root meta files
+    # Runtime packages and recipes must survive a source-package update.
     s = str(rel).replace("\\", "/")
-    if s.startswith(("src/", "ui/", "app/", "config/")):
+    if s.startswith(("src/", "ui/", "app/", "config/", "recipes/")):
         return True
-    if s in ("scripts/agentbus_updater.py", "README.md", "pyproject.toml", "setup.py"):
+    if s in (
+        "scripts/agentbus_updater.py",
+        "dispatcher.py",
+        "dispatcher_ui.py",
+        "admin_ui.py",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ):
         return True
     if s.startswith("requirements") and s.endswith(".txt"):
         return True
@@ -71,14 +85,28 @@ def should_include(path: Path, root: Path) -> bool:
 
 def collect_files(root: Path) -> list[Path]:
     files: list[Path] = []
-    roots = [root / "src", root / "ui", root / "app", root / "config", root / "scripts"]
+    roots = [
+        root / "src",
+        root / "ui",
+        root / "app",
+        root / "config",
+        root / "recipes",
+        root / "scripts",
+    ]
     for base in roots:
         if not base.exists():
             continue
         for p in base.rglob("*"):
             if p.is_file() and should_include(p, root):
                 files.append(p)
-    for name in ("README.md", "pyproject.toml", "setup.py"):
+    for name in (
+        "dispatcher.py",
+        "dispatcher_ui.py",
+        "admin_ui.py",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ):
         f = root / name
         if f.is_file():
             files.append(f)
@@ -115,11 +143,11 @@ def write_manifest(
     notes: str,
 ) -> dict:
     manifest = {
-        "app": "AgentBus",
+        "app": "NVCode",
         "version": version,
         "channel": channel,
         "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "notes": notes or f"AgentBus {version}",
+        "notes": notes or f"NVCode {version}",
         "min_updater": "1.0.0",
         "package": {
             "url": package_url,
@@ -127,7 +155,7 @@ def write_manifest(
             "size_bytes": size_bytes,
             "format": "zip",
         },
-        "user_data_paths": ["%APPDATA%/AgentBus"],
+        "user_data_paths": ["%APPDATA%/AgentBus", "%APPDATA%/NVCode"],
         "install_paths_hint": ["binaries", "runtime", "ui", "skills", "src"],
     }
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -145,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Public URL of the zip (defaults to GitHub Releases path template)",
     )
-    ap.add_argument("--repo", default="bananapowerrr/Dispatcher")
+    ap.add_argument("--repo", default="bananapowerrr/NVCode")
     args = ap.parse_args(argv)
 
     root = repo_root()
@@ -155,17 +183,17 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     version = args.version.lstrip("v")
-    asset_name = f"AgentBus-{version}-src.zip"
+    asset_name = f"NVCode-{version}-src.zip"
     zip_path = out / asset_name
     files = collect_files(root)
     if not files:
         # minimal fallback for sandbox without full tree
         marker = out / "_build_marker.txt"
-        marker.write_text(f"AgentBus {version}\n", encoding="utf-8")
+        marker.write_text(f"NVCode {version}\n", encoding="utf-8")
         files = [marker]
-        build_zip(files, out, zip_path, prefix=f"AgentBus-{version}")
+        build_zip(files, out, zip_path, prefix=f"NVCode-{version}")
     else:
-        build_zip(files, root, zip_path, prefix=f"AgentBus-{version}")
+        build_zip(files, root, zip_path, prefix=f"NVCode-{version}")
 
     digest = sha256_file(zip_path)
     size = zip_path.stat().st_size
