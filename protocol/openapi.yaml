@@ -164,7 +164,7 @@ paths:
                 $ref: "#/components/schemas/MetricsResponse"
   /v1/logs/tail:
     get:
-      summary: Tail log lines (redacted)
+      summary: Tail log lines (redacted, optional filters)
       operationId: getLogsTail
       parameters:
         - name: n
@@ -173,6 +173,21 @@ paths:
             type: integer
             default: 200
             maximum: 2000
+        - name: task_id
+          in: query
+          description: Substring match for task id in log lines
+          schema:
+            type: string
+        - name: level
+          in: query
+          description: Log level filter (DEBUG, INFO, WARN/WARNING, ERROR, CRITICAL)
+          schema:
+            type: string
+        - name: source
+          in: query
+          description: Prefer log file name containing source, or line match
+          schema:
+            type: string
       responses:
         "200":
           description: Log lines
