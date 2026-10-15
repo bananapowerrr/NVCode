@@ -95,7 +95,7 @@ class QueueController(_Controller):
     """Observe the current task queue, including status changes."""
     def snapshot(self) -> dict[str, Any]:
         tasks = [dict(task) for task in self.store.state.tasks.values()]
-        tasks.sort(key=lambda item: (str(item.get("status", "")), str(item.get("task_id", item.get("id", ""))))
+        tasks.sort(key=lambda item: (str(item.get("status", "")), str(item.get("task_id", item.get("id", "")))))
         return {"tasks": tasks, "count": len(tasks), "connection": self.store.state.connection}
 
     def _matches(self, change: Mapping[str, Any]) -> bool:
