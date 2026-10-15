@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nvcode-client"
+version = "0.1.0"
+description = "UI-independent Python client SDK for the NVCode Protocol v0 API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+nvcode-client-demo = "nvcode_client.demo:main"
+nvcode-interactive-demo = "nvcode_client.interactive_demo:main"
+nvcode-app-shell = "nvcode_client.app_shell:main"
+
+[tool.setuptools]
+packages = ["nvcode_client"]
+package-dir = { nvcode_client = "." }
+include-package-data = true
