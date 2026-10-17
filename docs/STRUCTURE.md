@@ -7,14 +7,15 @@ NVCode/
 ├── dispatcher.py          # CLI / runtime entry point
 ├── dispatcher_ui.py       # desktop UI entry point
 ├── admin_ui.py            # administration UI entry point
-├── pyproject.toml         # package metadata and tool configuration
+├── pyproject.toml         # package metadata (pytest config lives in pytest.ini)
+├── pytest.ini             # pytest configuration (canonical)
 ├── requirements*.txt      # dependency sets
 ├── config/                # policy, workers, providers, presets, UI strings
 ├── recipes/               # reusable task recipes
 ├── plugins/               # plugin integrations and examples
 ├── src/
 │   ├── app/               # application services / UI-facing API
-│   ├── cli/               # CLI support and command helpers
+│   ├── cli/               # dashboard server, init wizard, recipes
 │   ├── core/              # runtime, queue, routing, execution, verification
 │   ├── intelligence/      # planning and advisory intelligence
 │   ├── safety/            # safety checks and Git operations
@@ -23,6 +24,8 @@ NVCode/
 ├── ui/                    # desktop interface and panels
 ├── providers/             # provider adapters and registry
 ├── eventbus/              # event handling
+├── protocol/              # SDK / REST protocol surface
+├── nvcode_client/         # example client for the protocol
 ├── tests/                 # automated tests
 ├── scripts/               # bootstrap, audit, build, release, CI helpers
 ├── .github/               # GitHub workflows and repository automation
@@ -41,12 +44,12 @@ NVCode/
 | Area | Responsibility |
 |---|---|
 | `src/core/` | Task lifecycle, queue operations, routing, execution, verification, recovery |
-| `src/intelligence/` | Context, 
-analysis, planning, advisory decisions |
+| `src/intelligence/` | Context, analysis, planning, advisory decisions |
 | `src/app/` | Application-facing services and workflows |
 | `src/safety/` | Policy enforcement and guarded operations |
 | `src/skills/` | Deterministic and extensible coding skills |
 | `ui/` | Desktop chat and supporting panels |
+| `protocol/`, `nvcode_client/` | Protocol surface and example client integration |
 | `config/` | Runtime policy, worker/provider settings, feature flags and localization |
 | `tests/` | Regression and integration coverage |
 

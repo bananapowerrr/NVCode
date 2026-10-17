@@ -1,6 +1,6 @@
 # TECHNICAL_DEBT_REGISTRY.md — реестр технического долга AgentBus
 
-> Дата: 2026-10-08, актуализирован 2026-10-17 (полный аудит репозитория + закрытие TD-009/023). Метод: grep-скан + два параллельных суб-агентных скана (длинные функции/дубли/мёртвый код; гонки/атомарность) + ручная сверка строк.
+> Дата: 2026-10-08, актуализирован 2026-10-17 (полный аудит репозитория; закрытие TD-009/023; зачистка мёртвого кода — TD-011, TD-015). Метод: grep-скан + два параллельных суб-агентных скана (длинные функции/дубли/мёртвый код; гонки/атомарность) + ручная сверка строк.
 > Соглашение аудита: **фиксируем, не чиним.** Исправления — по явному запросу (2026-10-17: пользовательский запрос на полную зачистку — TD-009/023 закрыты).
 > `Requires Human Review` — запись, которую стоит перепроверить человеком (вывод скана, а не ручной чек).
 
@@ -25,11 +25,11 @@
 dy tmp+replace; save failure now logged (`health.save_state`) |
 | TD-009 | `src/skills/custom/format_code.py:4` | DEAD | Low | Стаб `"""TODO: wire to existing SkillRegistry or implement."""` — не подключён ни в один реестр. | Подключить или удалить. | сверено grep TODO  **FIXED 2026-10-17**: стаб удалён; генератор скиллов (`skill_learner`) остался, стабы больше не создаются в репо |
 | TD-010 | `src/safety/gitops.py:525` `build_commit_message` | DEAD | Low | Импортировалась (`runtime.py:34`, `runtime_ops.py:27`), но нигде не вызывалась. | Использовать в реальном коммите задач. | **FIXED 2026-10-08**: применяется в `rp_verify.py` при коммите `plan.stage` |
-| TD-011 | `src/core/rp_cache_skills.py:415` vs `src/core/rp_skills_stage.py:68` | ДУПЛ | Medium | Полный дубль `_try_skill` (~140 строк). Прод MRO runtime использует `RPCacheSkillsMixin`, а тесты якорят `rp_skills_stage` (`tests/test_skills_verification_day11.py:41-62`) — прод и тесты смотрят на разные копии. | Один mixin; перенести тесты на используемый вариант. | сверено |
+| TD-011 | `src/core/rp_cache_skills.py` (ранее дубль в `src/core/rp_skills_stage.py`) | ДУПЛ | Medium | Полный дубль `_try_skill` (~140 строк): прод MRO runtime использует `RPCacheSkillsMixin`, а тесты якорили вторую копию. | Один mixin; перенести тесты на используемый вариант. | **FIXED 2026-10-17**: `rp_skills_stage.py` удалён; тесты `test_skills_verification_day11.py` перенесены на `RPCacheSkillsMixin` |
 | TD-012 | `src/core/rp_llm.py:466` `_stage_llm_pipeline` | ЛУ | Medium | 648 строк — единственный вход LLM-этапа (роутинг/gate/cache/skills/sub-agents/worker). Высокий порог ревью. | Декомпозиция на под-методы по шагам пайплайна. | scan |
 | TD-013 | `src/core/runtime_ops.py:277` `finish_task` | ЛУ | Medium | 298 строк, содержит resign/очередь/финализации. | Декомпозиция, извлечение resign. | scan |
 | TD-014 | `src/core/task_result.py:258` `build_task_result` | ЛУ | Medium | 283 строки форматирования результата для UI/чата. | Таблица/шаблоны вместо ветвления. | scan |
-| TD-015 | `src/intelligence/autonomous_loop.py:152` `run_tick` | ЛУ | Medium | 268 строк ночного цикла с recovery-ветками; циклонно complex. | Декомпозиция + тесты на сценарии recovery. | scan |
+| TD-015 | `src/intelligence/autonomous_loop.py` `run_tick` (ранее) | ЛУ | Medium | 268 строк ночного цикла с recovery-ветками; циклонно complex. | Декомпозиция + тесты на сценарии recovery. | **FIXED 2026-10-17**: мёртвый модуль удалён — `run_tick` не вызывался runtime; рабочий ночной цикл — `core/night_mode_controller.py` (`run_autonomous_loop`) + `night_policy` |
 | TD-016 | `src/core/night_mode_controller.py:243` `run_autonomous_loop` | ЛУ | Medium | 257 строк бюджета/итераций Night Mode. | Декомпозиция. | scan |
 | TD-017 | `src/core/doctor.py:124` `run_doctor` | ЛУ | Medium | 246 строк диагностики (`--diagnose`). | Декомпозиция + таблицы. | scan |
 | TD-018 |
@@ -50,9 +50,9 @@ dy tmp+replace; save failure now logged (`health.save_state`) |
 
 ## Статистика по критичности (открытые на 2026-10-17)
 - **High: 0** (TD-001..006 — все закрыты)
-- Medium: 12 (TD-011..TD-021, TD-027)
+- Medium: 10 (TD-012..TD-014, TD-016..TD-021, TD-027)
 - Low: 4 (TD-022, TD-028, TD-029, TD-030)
-- Закрыто: 14 записей (TD-001..TD-010, TD-023..TD-026) — см. пометки FIXED в таблице.
+- Закрыто: 16 записей (TD-001..TD-011, TD-015, TD-023..TD-026) — см. пометки FIXED в таблице.
 
 ## Правила ведения
 1. Новые находки добавляются с актуальной датой и `file:line`.

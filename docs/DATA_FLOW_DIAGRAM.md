@@ -34,7 +34,7 @@ flowchart TD
         META -- "нет" --> CACHE{"solution_cache: hit?"}
         CACHE -- "hit" --> CDONE["rp_cache_skills apply => DONE-канал"]
         CDONE --> DONE_PATH
-        CACHE -- "miss" --> SKILLS{"skills stage: cache_skills._try_skill<br/>(дубль: rp_skills_stage)"}
+        CACHE -- "miss" --> SKILLS{"skills stage: cache_skills._try_skill<br/>(RPCacheSkillsMixin)"}
         SKILLS -- "skill ok" --> CDONE
         SKILLS -- "нет / fail" --> EXEC["executor.run => воркер (opencode/aider/...)"]
         EXEC --> OUT["worker result (ok / err + evidence)"]
@@ -53,9 +53,9 @@ flowchart TD
     end
 
     subgraph NIGHT["Night Mode: AGENTBUS_NIGHT_MODE=1"]
-        NS["NightScheduler.is_night / filter_for_now"] --> NLOOP["autonomous_loop.run_tick<br/>night_mode_controller"]
+        NS["night_policy.plan_night_run:<br/>NightScheduler.is_night / filter_for_now"] --> NLOOP["night_policy.run_policy_night -><br/>night_mode_controller.run_autonomous_loop"]
         NLOOP --> CORE
-        NLOOP --> REP["morning report (report.py) => done/"]
+        NLOOP --> REP["morning report (night_policy.build_morning_report) => done/"]
     end
 
     LOOP["safety/loopguard: новизна, повторы, строки"] --> PRE
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 4. Night Mode
 
-При `AGENTBUS_NIGHT_MODE=1` в `run_forever` дополнительно крутится автономный цикл (`runtime.py:587-606`; `autonomous_loop.run_tick` `autonomous_loop.py:152`, `night_mode_controller.run_autonomous_loop` `night_mode_controller.py:243`). `NightScheduler` (`night_scheduler.py:38-72`) выбирает задачи в ночном окне (`start 22:00/end 06:00`, `max_tasks_per_night`, `min_complexity`); утром пишется отчёт (`report.py`). Всё идёт через те же ворота верификации и paid-gate (вечером платных задач не набирают сверх бюджета).
+При `AGENTBUS_NIGHT_MODE=1` ночной цикл планируется через `night_policy` (`plan_night_run` / `run_policy_night`, `night_policy.py:208,244`): `NightScheduler` (`night_scheduler.py:57-78`) выбирает задачи в ночном окне (`start 22:00/end 06:00`, `max_tasks_per_night`, `min_complexity`), затем исполняющий цикл — `night_mode_controller.run_autonomous_loop` (`night_mode_controller.py:243`), привязанный к Runtime через `night_runtime_bridge.runtime_execute_fn`; утром пишется отчёт (`night_policy.build_morning_report` + `report.py`). Всё идёт через те же ворота верификации и paid-gate (вечером платных задач не набирают сверх бюджета).
 
 ## 5. Ключевые решения и риски
 
