@@ -69,7 +69,7 @@ Run the checks supported by your environment and report failures honestly. Do no
 
 ## Documentation
 
-See [docs/INDEX.md](INDEX.md) for architecture, contracts, live checks, troubleshooting, product status, and technical debt.
+See [docs/INDEX.md](INDEX.md) for architecture, contracts, live checks, troubleshooting, and technical debt.
 
 ## Legacy names
 

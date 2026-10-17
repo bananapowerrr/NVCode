@@ -1,4 +1,4 @@
-# DATA_FLOW_DIAGRAM.md — поток данных AgentBus
+# DATA_FLOW_DIAGRAM.md — поток данных NVCode
 
 > Дата аудита: 2026-10-08.
 > Источник истины по файлам: `src/core/*`, `src/intelligence/*`, `src/safety/*` (см. ссылки `файл:строка` в тексте).
@@ -71,7 +71,7 @@ flowchart TD
 4. **Pre-hooks.** `_phase_pre_hooks` (`rp_lifecycle.py`) прогоняет health pre-check: billing-пометки → cooldown, тайры ошибок → паузы (`health.py`). При billing-ошибке задача не семплируется платным провайдером повторно 24h.
 5. **LLM-этап** `_stage_llm_pipeline` (`rp_llm.py:466, ~648 строк`):
    - роутер выбирает воркера и подгоняет контекст (`router.select_executor`, `LOCAL_CTX_BUDGET=6000`);
-   - paid-gate: неизвестный провайдер трактуется **платным** → `DEFERRED` с причиной (`paid_gate.py`, см. `CONTRACTS_AUDIT.md`);
+   - paid-gate: неизвестный провайдер трактуется **платным** → `DEFERRED` с причиной (`paid_gate.py`, см. `CONTRACTS.md`);
    - meta-decompose (env `AGENTBUS_META`): сложная задача → `meta_decompose` (1.5B через `OLLAMA_HOST`) → подзадачи от `SubAgent` с `parent_id` в `incoming` (`sub_agent.py:184-213 spawn_many/_save_registry`), глубина ≤ `MAX_DEPTH=2`, детей ≤ `DEFAULT_MAX_CHILDREN=8` / жёстко `ABSOLUTE_MAX_CHILDREN=16`;
    - solution-cache: hit → кэш-применение → DONE (быстрый путь, `rp_cache_skills.py`);
    - skills: `_try_skill` сначала из кэша навыков, иначе навык запускается как под-исполнитель; при неудаче → переход к воркеру.
