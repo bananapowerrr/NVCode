@@ -399,7 +399,10 @@ def save_living_plan(project_root: str | Path, plan: LivingPlan) -> Path:
     plan.touch()
     path = living_plan_path(project_root)
     try:
-        path.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        # TD-007: atomic plan save (tmp + os.replace)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
     except Exception as exp:
         try:
             from utils.safe_log import error
@@ -409,7 +412,11 @@ def save_living_plan(project_root: str | Path, plan: LivingPlan) -> Path:
         raise
     # mirror markdown for humans / pev panel
     try:
-        (d / "living_plan.md").write_text(plan.to_markdown(), encoding="utf-8")
+        md = d / "living_plan.md"
+        # TD-007: atomic md mirror (tmp + os.replace)
+        md_tmp = md.with_suffix(md.suffix + ".tmp")
+        md_tmp.write_text(plan.to_markdown(), encoding="utf-8")
+        md_tmp.replace(md)
     except Exception as exp:
         try:
             from utils.safe_log import warn
@@ -461,3 +468,4 @@ def filter_ready_nodes(nodes: list[Any]) -> list[Any]:
             continue
         out.append(n)
     return out
+

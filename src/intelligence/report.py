@@ -51,4 +51,9 @@ class NightlyReport:
             return None
         self.report_dir.mkdir(parents=True,exist_ok=True)
         name=f"nightly_{suffix}_{datetime.now():%Y%m%d_%H%M%S}.txt" if suffix else f"nightly_{datetime.now():%Y%m%d_%H%M%S}.txt"
-        path=self.report_dir/name; path.write_text(self.render(),encoding="utf-8"); return path
+        # TD-025: atomic report write (tmp + os.replace)
+        path=self.report_dir/name
+        tmp=path.with_suffix(path.suffix+".tmp")
+        tmp.write_text(self.render(),encoding="utf-8")
+        tmp.replace(path); return path
+

@@ -29,7 +29,6 @@ def _sessions_dir() -> Path:
 
 
 @dataclass
-@dataclass
 class Turn:
     role: str  # user | assistant | system
     content: str
@@ -315,7 +314,10 @@ class ConversationStore:
         path = self._path(conv.session_id)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(conv.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            # TD-024: atomic session write (tmp + os.replace)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(conv.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
         except Exception:
             pass
 
@@ -331,3 +333,4 @@ class ConversationStore:
 
 
 GLOBAL_CONVERSATIONS = ConversationStore()
+

@@ -132,8 +132,16 @@ class HealthRegistry:
             tmp.write_text(json.dumps({n: s.to_dict() for n, s in self.states.items()},
                                       ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(self.state_file)
-        except OSError:
-            pass
+        except OSError as exc:
+            # TD-008: a swallowed save failure silently lost worker health state
+            try:
+                import logging
+                logging.getLogger("agentbus.health").warning(
+                    "save_state failed %s: %s: %s",
+                    self.state_file, type(exc).__name__, exc,
+                )
+            except Exception:
+                pass
 
     def state(self, name: str) -> WorkerState:
         return self.states.setdefault(name, WorkerState())
@@ -398,3 +406,4 @@ def _retry_after_seconds(error: str) -> float:
 
 def _is_rate_limit(error: str) -> bool:
     return bool(re.search(r"\b429\b|rate.?limit|too many requests", error or "", re.I))
+
