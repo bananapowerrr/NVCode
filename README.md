@@ -54,7 +54,7 @@ ollama pull qwen2.5-coder:7b
 
 ## Документация
 
-Начните с **[документационного индекса](docs/INDEX.md)**. Там находятся инструкции по установке, архитектуре, проверкам, релизу и текущему техническому долгу.
+Начните с **[документационного индекса](docs/INDEX.md)**. Там находятся инструкции по установке, архитектуре, проверках, релизу и текущему техническому долгу.
 
 - [Getting started](docs/GETTING_STARTED.md)
 - [Структура репозитория](docs/STRUCTURE.md)
@@ -62,8 +62,7 @@ ollama pull qwen2.5-coder:7b
 - [Live runbook](docs/LIVE_RUNBOOK.md)
 - [Реестр технического долга](docs/TECHNICAL_DEBT_REGISTRY.md)
 
-## Разработ
-ка и проверка
+## Разработка и проверка
 
 ```bash
 python scripts/project_audit.py

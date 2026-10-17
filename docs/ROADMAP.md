@@ -1,35 +1,32 @@
-﻿# NVCode roadmap
+# NVCode roadmap
 
-## Runtime engineering
+> Актуализировано 2026-10-17. Завершённые этапы суммированы без исторических таблиц; детали — в тестах и реестре технического долга.
 
-| ID | Focus | Status |
-|----|--------|--------|
-| R1 | Terminal path (`finish_task`) | done / in repo |
-| R2 | ExecutionResult → Evidence | done / in repo |
-| R3 | Recovery Controller | done / in repo |
-| R4 | Worker / fallback contract | done |
-| R5 | Context budget | done |
-| R6 | Night Mode v0 | done |
+## Завершённые этапы
 
-## Product distribution — UPDATE-001
+- **Runtime engineering R1–R6** — terminal path (`finish_task`), ExecutionResult → Evidence, Recovery Controller, worker/fallback contract, context budget, Night Mode v0. Всё в репо, покрыто тестами.
+- **Распространение UPDATE-001A–F** — версия + release manifest, UpdateChecker, UI-уведомление, внешний updater, проверка хешей + backup/rollback, GitHub Release + build pipeline.
+- **DEV-001–009** — runtime decision, recovery policy, WorkerResult, worker fallback, context budget, continuity задач, Night Mode loop + persist + policy.
+- **Pre-UI blockers B1–B3** — atomic claim + terminal contract, cache/skill путь через `finish_task`, post-failure meta decomposition.
 
-| ID | Focus | Status |
-|----|--------|--------|
-| UPDATE-001A | Version + Release Manifest contract | done |
-| UPDATE-001B | UpdateChecker (fetch + compare) | done |
-| UPDATE-001C | UI / Chat notification | done |
-| UPDATE-001D | External agentbus-updater process | done |
-| UPDATE-001E | Hash verify + backup/replace/rollback | done |
-| UPDATE-001F | GitHub Release + build pipeline | done |
+## Текущий фокус
 
-### Update principles
+| ID | Фокус | Статус |
+|----|-------|--------|
+| WIRE-003 | worker_result на всех ERROR-выходах | next |
+| WIRE-004 | context_audit в metadata (assemble возвращает его) | partial |
+| B4 | E2E-доказательство связки B1–B3 | partial |
+| LIVE-001 | Приёмка на реальном ПК (Ollama/Aider) — см. [LIVE_ACCEPTANCE](LIVE_ACCEPTANCE.md) | PC |
+| NAMING | Миграция legacy-имён AgentBus → NVCode с тестами совместимости | planned |
 
-1. **App does not replace itself while running** — external updater.
-2. **User data never in the install package path** (existing `%APPDATA%/AgentBus/` remains a legacy data path until a tested migration is implemented; do not rename it yet).
-3. **Fail-closed manifest**: missing sha256 / invalid JSON → no update offer.
-4. **Git is for developers**; Releases + UpdateChecker are for users.
+## Принципы обновления
 
-### Target UX
+1. **Приложение не заменяет себя на ходу** — внешний updater.
+2. **Пользовательские данные не живут в пути установки** (`%APPDATA%/AgentBus/` — legacy-путь до протестированной миграции; не переименовывать вслепую).
+3. **Fail-closed manifest**: нет sha256 / невалидный JSON → нет предложения обновления.
+4. **Git — для разработчиков**; Releases + UpdateChecker — для пользователей.
+
+### Целевой UX
 
 ```
 UpdateChecker → "NVCode update available" → [Update] [Later]
@@ -37,58 +34,6 @@ UpdateChecker → "NVCode update available" → [Update] [Later]
   → failed start → rollback
 ```
 
-## Live acceptance
+## Явно не сейчас
 
-LIVE-001 … acceptance on real PC (Ollama/Aider) — parallel, not a blocker for R4–R5 / UPDATE-001A–B.
-
-## Explicitly not now
-
-MCP, heavy RAG, multi-agent parallelism, cloud provider sprawl, Day-doc spam.
-
-
-## Feature development (post R/UPDATE)
-
-| ID | Focus | Status |
-|----|--------|--------|
-| DEV-001 | Execution Evidence → Runtime Decision | done |
-| DEV-002 | Recovery Controller v1 (policies) | done |
-| DEV-003 | Worker Failure Contract (WorkerResult) | done |
-| DEV-004 | Worker Fallback v1 | done |
-| DEV-005 | Context Budget (priority + audit) | done |
-| DEV-006 | Task context / conversation continuity | done |
-| DEV-007 | Night Mode autonomous loop | done |
-| DEV-008 | Persistent Night Run / Crash Recovery | done |
-| DEV-009 | Night Mode Policy/Scheduler | done |
-
-LIVE-001 remains parallel acceptance on PC.
-
-
-## Post-audit wiring (after Git HEAD 7cd1859)
-
-| ID | Focus | Status |
-|----|--------|--------|
-| WIRE-001 | Recovery → Chat (notify_error + row) | done |
-| WIRE-002 | rp_context + task_continuity | done |
-| WIRE-003 | worker_result on all ERROR exits | next |
-| WIRE-004 | context_audit in metadata (assemble returns it) | partial |
-| SYNC-SCRIPTS | build_release + agentbus_updater + release.yml → Git | next (local ready) |
-| LIVE-001 | Real PC Ollama/Aider | PC |
-| NIGHT-UI-001 | Night status + Morning Report in Chat | done |
-
-| NIGHT-RT-001 | execute_fn → Runtime bridge (mockable) | done |
-
-
-## Pre-UI blockers (blocking for UI phase)
-
-UI work does not start until B1..004 are green. Details and acceptance
-criteria in [PRE_UI_BLOCKERS.md](PRE_UI_BLOCKERS.md).
-
-| ID | Focus | Status |
-|----|-------|--------|
-| B1 | F1 atomic claim + F2 terminal contract | done (desktop caveat) |
-| B2 | F3 cache/skill path through `finish_task` | done |
-| B3 | F4 post-failure meta decomposition | done |
-| B4 | E2E proof of B1..B3 | partial |
-
-Warnings W1 (spill race), W2 (LoopGuard false positives) and W3 (metrics sink)
-are deferred to phase 2 and are not blockers.
+MCP, тяжёлый RAG, мульти-агентный параллелизм, разрастание облачных провайдеров.

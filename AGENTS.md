@@ -37,8 +37,7 @@ Inspect the repository's actual CI workflows before assuming a command is requir
 - Developer tools: `scripts/`
 - Current documentation index: `docs/INDEX.md`
 
-## Change w
-orkflow
+## Change workflow
 
 1. Read `docs/INDEX.md` and the specific source files involved.
 2. Reproduce or test the reported behavior where possible.
