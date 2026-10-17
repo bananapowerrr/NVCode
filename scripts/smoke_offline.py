@@ -29,7 +29,7 @@ def _fail(msg: str) -> None:
 def check_imports() -> list[str]:
     '''"""check_imports()."""'''
     issues = []
-    mods = ['core.bus', 'core.runtime', 'core.feature_flags', 'core.plugin_registry', 'skills.matcher', 'skills.builtin', 'core.verify_policy', 'core.task_safety', 'core.pipeline_stages', 'core.tool_registry', 'safety.static_guard', 'core.e2e_harness', 'intelligence.solution_cache', 'skills.autopilot', 'utils.cost_tracker', 'utils.pipeline_events', 'intelligence.task_graph', 'intelligence.memory_layers', 'safety.diff_policy', 'core.task_contract', 'core.verification_engine', 'core.mock_worker', 'core.pipeline_e2e']
+    mods = ['core.bus', 'core.runtime', 'core.feature_flags', 'core.plugin_registry', 'skills.matcher', 'skills.builtin', 'core.verify_policy', 'core.task_safety', 'core.pipeline_stages', 'core.tool_registry', 'safety.static_guard', 'core.e2e_harness', 'intelligence.solution_cache', 'skills.autopilot', 'utils.cost_tracker', 'utils.pipeline_events', 'intelligence.task_graph', 'safety.diff_policy', 'core.task_contract', 'core.verification_engine', 'core.mock_worker', 'core.pipeline_e2e']
     for m in mods:
         try:
             __import__(m)

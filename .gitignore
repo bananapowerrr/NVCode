@@ -25,19 +25,13 @@ dist/
 # ── Runtime: шина каналов, состояние задач, события ─────────────
 channels/
 events/
+logs/
 .agentbus/
 incoming/
 processing/
 done/
 errors/
 deferred/
-logs/
-# archive/ убран намеренно: в docs/archive лежат отчёты о приёмке,
-# они отслеживались в git, а правилоarchive/ им противоречило. Из-за
-# этого расхождения скрипт предлагал удалить их из GitHub.
-# Служебные папки переименованы, чтобы «мусор» не спорил с документами.
-gemini_archive/
-GeminiProcessed/
 
 # ── Runtime-состояние в json ────────────────────────────────────
 cloud_usage.json
@@ -48,7 +42,7 @@ rate_limit_until.json
 ranker_state.json
 workers_state.json
 
-# ── Артефакты тестов и прогона ──────────────────────────────────
+# ── Артефакты тестов и прогона ─────────────────────────────────
 .testruns/
 junit*.xml
 .coverage
@@ -60,15 +54,8 @@ htmlcov/
 *.tmp
 *.bak
 crash.log
-push_agentbus_to_git.ps1
-
-# ── Служебное от синхронизации Drive ↔ GitHub ─────────────────────
-# Тестовый файл Apps Script selftest(). Раньше утекал в репозиторий
-# и коммитился локальным автопушем.
-__sync_selftest__.txt
 
 # ── OS-мусор ────────────────────────────────────────────────────
-# ── Мусор операционной системы ─────────────────────────────────
 # Создаётся Windows в любой синхронизируемой папке, включая саму Drive.
 .DS_Store
 desktop.ini
@@ -87,9 +74,5 @@ Desktop.ini
 lessons.json
 solution_cache.json
 semantic_memory.json
-
-# журналы и события диспетчера в корне
-/events/
-/logs/
 
 .opencode/

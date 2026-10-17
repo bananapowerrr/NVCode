@@ -143,6 +143,7 @@ def _diagnose() -> int:
         print(f"  desktop_queue size = {n}")
     except Exception as exp:
         print(f"  desktop_queue ERR: {exp}")
+    try:
         from core.feature_flags import is_enabled
         print(f"  phone_filebus = {is_enabled('phone_filebus', default=False)}")
         print(f"  remote_filebus = {is_enabled('remote_filebus', default=False)}")
@@ -196,6 +197,11 @@ def _diagnose() -> int:
 
     print("\nREADY" if code == 0 else "\nNOT READY")
     return code
+
+
+# Public aliases: scripts/bootstrap.py (and other entrypoints) import these.
+run_diagnose = _diagnose
+diagnose = _diagnose
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)

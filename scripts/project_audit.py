@@ -37,6 +37,7 @@ LEGACY_IMPORTS = (
 )
 ALLOWED_ROOT = {
     "README.md",
+    "AGENTS.md",
     "requirements.txt",
     "requirements-ui.txt",
     "pyproject.toml",
@@ -47,18 +48,11 @@ ALLOWED_ROOT = {
     ".gitignore",
     ".env",
     ".env.example",
-    "LICENSE",
-    "CHANGELOG.md",
-    # convenience launchers (also in scripts/)
-    "start.bat",
-    "start.sh",
-    "start_ui.bat",
-    "start_doctor.bat",
-    "start_all.bat",
 }
 ALLOWED_ROOT_DIRS = {
-    "src", "ui", "config", "docs", "tests", "scripts", "channels",
-    "eventbus", "providers", "plugins", "recipes", "archive",
+    "src", "ui", "config", "docs", "tests", "scripts",
+    "eventbus", "providers", "plugins", "recipes",
+    "protocol", "nvcode_client",
     ".agentbus", ".git", ".venv", "venv", "dist", "build", "__pycache__",
 }
 
