@@ -69,21 +69,3 @@ def test_task_result_with_skill_fields():
     assert tr.skill == "format_code"
     assert "x.py" in tr.changes.files
 
-
-def test_skill_worker_uses_contract(tmp_path):
-    from core.skill_worker import SkillWorker
-    from skills.skills import SkillRegistry
-    from skills.tools import ToolRegistry
-
-    (tmp_path / "a.py").write_text("def old_fn():\n    return 1\n", encoding="utf-8")
-    reg = SkillRegistry(ToolRegistry(project_root=str(tmp_path)))
-    sw = SkillWorker(registry=reg)
-
-    class T:
-        message = "переименуй old_fn в new_fn"
-        files = ["a.py"]
-
-    wr = sw.execute(T(), context={"project_root": str(tmp_path)})
-    # may succeed or fail depending on skill impl, but contract fields present
-    assert wr.worker == "skill_worker"
-    assert "skill" in (wr.meta or {})

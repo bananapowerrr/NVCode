@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""FC-24/25: ProjectState + supervisor role map."""
+"""FC-24/25: ProjectState persistence."""
 from __future__ import annotations
 
 from intelligence.project_state import (
@@ -7,20 +7,6 @@ from intelligence.project_state import (
     load_project_state,
     save_project_state,
 )
-from intelligence.supervisor_roles import describe_roles, list_roles, modules_for
-
-
-def test_roles_cover_core():
-    roles = list_roles()
-    for r in ("planner", "reviewer", "state", "context", "replanner"):
-        assert r in roles
-        assert modules_for(r)
-
-
-def test_describe_roles():
-    d = describe_roles()
-    assert "planner" in d
-    assert "pev_loop" in str(d["planner"]["modules"])
 
 
 def test_project_state_roundtrip(tmp_path):

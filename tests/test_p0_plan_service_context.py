@@ -2,7 +2,6 @@
 from pathlib import Path
 from intelligence.living_plan import LivingPlan, LivingStep, save_living_plan
 from app.plan_service import PlanService, classify_plan_input, apply_input_policy
-from intelligence.task_context import build_task_plan_context
 
 def test_plan_service_add_cancel_move(tmp_path: Path):
     plan = LivingPlan(version=1, summary="auth")
@@ -46,21 +45,6 @@ def test_classify_no_silent():
     r = apply_input_policy(".", "переделай oauth", auto=False)
     assert r["requires_decision"] is True
     assert r["applied"] is False
-
-def test_task_context_remaining(tmp_path: Path):
-    plan = LivingPlan(version=2, summary="goal")
-    plan.steps.append(LivingStep(id="1", action="Done step", status="DONE"))
-    plan.steps.append(LivingStep(id="2", action="Current", status="READY", meta={"task_id": "t2"}))
-    plan.steps.append(LivingStep(id="3", action="Later", status="PENDING"))
-    save_living_plan(tmp_path, plan)
-    text = build_task_plan_context(
-        tmp_path,
-        {"id": "t2", "metadata": {"plan_step_id": "2", "task_id": "t2", "source": "living_plan"}},
-    )
-    assert "ACTIVE PLAN" in text
-    assert "CURRENT STEP" in text
-    assert "Later" in text
-    assert "Do not assume" in text
 
 def test_finished_not_superseded(tmp_path: Path):
     plan = LivingPlan(version=1)

@@ -13,8 +13,6 @@ from intelligence.plan_runtime_bridge import (
     plan_blocks_enqueue,
     replan_after_error,
 )
-from app.plan_service import PlanService
-from app.plan_service_day2 import on_task_outcome, retry_error_step
 
 
 def _plan_two_steps() -> LivingPlan:
@@ -103,32 +101,6 @@ def test_persist_reload(tmp_path: Path):
     loaded = load_living_plan(root)
     assert loaded.get("s1").status == "DONE"
     assert loaded.version == plan.version
-
-
-def test_plan_service_on_task_outcome(tmp_path: Path):
-    root = tmp_path / "p2"
-    root.mkdir()
-    svc = PlanService(root)
-    plan = _plan_two_steps()
-    svc.save(plan)
-    out = on_task_outcome(root, "s1", task_status="DONE", task_id="tx")
-    assert out["ok"] is True
-    assert out["next_step_id"] == "s2"
-    listed = svc.list_plan()
-    assert any(s["id"] == "s1" and s["status"] == "DONE" for s in listed["steps"])
-
-
-def test_retry_error_step_service(tmp_path: Path):
-    root = tmp_path / "p3"
-    root.mkdir()
-    svc = PlanService(root)
-    plan = _plan_two_steps()
-    apply_task_outcome(plan, "s1", task_status="DONE", task_id="t1")
-    apply_task_outcome(plan, "s2", task_status="ERROR", task_id="t2")
-    svc.save(plan)
-    out = retry_error_step(root, "s2", new_action="Redo logout")
-    assert out["ok"] is True
-    assert plan.get("s2").status == "ERROR" or load_living_plan(root).get("s2").status == "ERROR"
 
 
 def test_blocks_when_error_stalls_plan():

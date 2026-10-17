@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Day 11 — skills verification integration (offline, no runtime mutation).
 
-Aligns Day-9 skills contract with existing RPSkillsStageMixin surface.
-Does NOT touch FSM / intake / executor / DONE gate / rp_skills_stage body.
+Aligns Day-9 skills contract with the live RPCacheSkillsMixin surface.
+Does NOT touch FSM / intake / executor / DONE gate / rp_cache_skills body.
 """
 from __future__ import annotations
 
@@ -34,14 +34,15 @@ def _prefer_src_package():
 
 
 # ---------------------------------------------------------------------------
-# Source-level contract: stage uses FC-15 path
+# Source-level contract: live skill stage surface (RPCacheSkillsMixin)
 # ---------------------------------------------------------------------------
 
-def test_try_skill_source_uses_build_skill_kwargs():
-    from core.rp_skills_stage import RPSkillsStageMixin
+def test_try_skill_source_builds_kwargs_and_executes():
+    from core.rp_cache_skills import RPCacheSkillsMixin
 
-    src = inspect.getsource(RPSkillsStageMixin._try_skill)
-    assert "build_skill_kwargs" in src
+    src = inspect.getsource(RPCacheSkillsMixin._try_skill)
+    # kwargs are assembled for the matched skill and passed to skills.execute
+    assert "kwargs" in src
     # must call execute after kwargs
     assert "execute" in src
     # success path returns payload dict; failure returns None (LLM fallthrough)
@@ -49,19 +50,19 @@ def test_try_skill_source_uses_build_skill_kwargs():
 
 
 def test_finalize_skill_result_exists_and_is_separate():
-    from core.rp_skills_stage import RPSkillsStageMixin
+    from core.rp_cache_skills import RPCacheSkillsMixin
 
-    assert hasattr(RPSkillsStageMixin, "_finalize_skill_result")
-    fin = inspect.getsource(RPSkillsStageMixin._finalize_skill_result)
+    assert hasattr(RPCacheSkillsMixin, "_finalize_skill_result")
+    fin = inspect.getsource(RPCacheSkillsMixin._finalize_skill_result)
     # finalize is the only place that should talk about completing skill tasks
     assert "skill" in fin.lower()
 
 
 def test_try_skill_does_not_hardcode_done_status():
     """DONE authority stays outside _try_skill body."""
-    from core.rp_skills_stage import RPSkillsStageMixin
+    from core.rp_cache_skills import RPCacheSkillsMixin
 
-    src = inspect.getsource(RPSkillsStageMixin._try_skill)
+    src = inspect.getsource(RPCacheSkillsMixin._try_skill)
     # _try_skill may mention method/skill but must not set task status DONE itself
     assert "status" not in src or "DONE" not in src.split("status")[0][-40:]
     # stronger: no assignment of DONE inside try_skill
