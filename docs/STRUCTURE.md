@@ -26,7 +26,7 @@ NVCode/
 ├── tests/                 # automated tests
 ├── scripts/               # bootstrap, audit, build, release, CI helpers
 ├── .github/               # GitHub workflows and repository automation
-└── docs/                  # current docs and historical archive
+└── docs/                  # current documentation only (historical reports purged 2026-10-17)
 ```
 
 ## Entry points
@@ -41,7 +41,8 @@ NVCode/
 | Area | Responsibility |
 |---|---|
 | `src/core/` | Task lifecycle, queue operations, routing, execution, verification, recovery |
-| `src/intelligence/` | Context, analysis, planning, advisory decisions |
+| `src/intelligence/` | Context, 
+analysis, planning, advisory decisions |
 | `src/app/` | Application-facing services and workflows |
 | `src/safety/` | Policy enforcement and guarded operations |
 | `src/skills/` | Deterministic and extensible coding skills |

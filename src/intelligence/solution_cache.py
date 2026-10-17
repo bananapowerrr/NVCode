@@ -367,7 +367,12 @@ class SolutionCache:
                 continue
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
+                # TD-023: atomic restore (tmp + replace). Cache snapshots and
+                # project files may live on a cloud-synced drive; a partial
+                # write would corrupt the restored file.
+                tmp = path.with_suffix(path.suffix + ".tmp")
+                tmp.write_text(content, encoding="utf-8")
+                os.replace(tmp, path)
                 written.append(rel_n)
             except OSError:
                 skipped.append(rel_n)

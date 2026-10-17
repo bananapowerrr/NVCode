@@ -50,7 +50,8 @@ For each failure, record:
 - smallest reproducible case;
 - regression test added or reason a test is not practical.
 
-Use [the live bug template](templates/LIVE_BUG.md) where appropriate.
+Use [the live bug template](templates/LIVE_BUG.md) where a
+ppropriate.
 
 ## 5. Release validation
 
@@ -62,7 +63,7 @@ Before publishing a release candidate:
 - run packaging and updater checks;
 - verify manifest app name, repository URL, artifact filename, and SHA-256;
 - confirm that legacy user data is preserved if a migration touches paths or environment variables;
-- update [Product Status](PRODUCT_STATUS.md) with actual evidence and the tested commit.
+- update the pull request / issue with actual evidence and the tested commit.
 
 ## 6. Evidence record
 

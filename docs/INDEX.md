@@ -1,6 +1,8 @@
 # NVCode documentation
 
-This index is the entry point for current documentation. Check source code and current CI configuration when a document's claim is uncertain. Documents under `docs/archive/` are historical evidence, not current instructions.
+This index is the entry point for current documentation. Check source code and current CI configuration when a document's claim is uncertain.
+
+> Исторические отчёты (DAY*, STATUS_*, HANDOFF, SYNC_*, аудиты и матрицы приёмки прошлых итераций) удалены 2026-10-17 при полной зачистке репозитория: они описывали завершённые этапы разработки и не соответствовали текущему коду. Актуальное состояние продукта отражают этот индекс, реестр технического долга и сами тесты.
 
 ## Start here
 
@@ -8,10 +10,7 @@ This index is the entry point for current documentation. Check source code and c
 2. [Structure](STRUCTURE.md) — repository layout and module responsibilities.
 3. [Contracts](CONTRACTS.md) — task, runtime, and verification expectations.
 4. [Live runbook](LIVE_RUNBOOK.md) — machine-level checks and troubleshooting workflow.
-5. [Product status](PRODUCT_STATUS.md) — current status snapshot; validate it before release decisions.
-6. [Cleanup report](CLEANUP_REPORT.md) — verified cleanup findings and follow-up actions.
-7. [NVCode rebrand plan](NVCODE_REBRAND_PLAN.md) — migration status, compatibility policy, and remaining work.
-8. [Technical debt registry](TECHNICAL_DEBT_REGISTRY.md) — candidates that still need confirmation or remediation.
+5. [Technical debt registry](TECHNICAL_DEBT_REGISTRY.md) — open debt items with `file:line` anchors; fixed items are marked `FIXED` with a date.
 
 ## Reference
 
@@ -25,8 +24,6 @@ This index is the entry point for current documentation. Check source code and c
 | [Roadmap](ROADMAP.md) | Product and engineering roadmap |
 | [Runtime contracts](RUNTIME_CONTRACTS.md) | Runtime-specific contract reference |
 | [Data flow diagram](DATA_FLOW_DIAGRAM.md) | High-level task flow |
-| [Offline freeze history](OFFLINE_FREEZE.md) | Historical constraints; not a current blanket freeze |
-| [Archive guide](archive/README.md) | How to interpret historical documents |
 
 ## Development loop
 
@@ -34,7 +31,8 @@ This index is the entry point for current documentation. Check source code and c
 Issue / task → reproduce → focused implementation → tests → review diff → update docs
 ```
 
-A task marked complete means its stated acceptance checks passed. It does not by itself certify the entire product or release.
+A task marked complete means its stated acceptance checks passed. It
+ does not by itself certify the entire product or release.
 
 ## Naming and legacy compatibility
 

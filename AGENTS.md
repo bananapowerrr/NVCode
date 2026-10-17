@@ -9,7 +9,7 @@ You are working in the **NVCode** repository. GitHub is the canonical source for
 3. Never claim tests, runtime scenarios, or release checks passed unless they were actually run and their results inspected.
 4. For behavior changes, add or update regression tests. For documentation changes, verify internal links and commands against the current repository.
 5. Keep user data, credentials, local runtime state, generated caches, and secrets out of Git.
-6. Preserve useful historical evidence in `docs/archive/`, but do not treat it as current architecture.
+6. Historical iteration reports (DAY*/STATUS*/HANDOFF/SYNC snapshots) are not kept in the repo; keep the docs set current and verified instead.
 7. Use the product name **NVCode** in current user-facing copy, documentation, package metadata, and new artifacts. Keep legacy identifiers only where needed for compatibility, migration, or existing data paths.
 8. Review the final diff for accidental deletions, generated files, unrelated changes, and misleading claims.
 
@@ -37,7 +37,8 @@ Inspect the repository's actual CI workflows before assuming a command is requir
 - Developer tools: `scripts/`
 - Current documentation index: `docs/INDEX.md`
 
-## Change workflow
+## Change w
+orkflow
 
 1. Read `docs/INDEX.md` and the specific source files involved.
 2. Reproduce or test the reported behavior where possible.

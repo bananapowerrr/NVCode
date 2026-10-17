@@ -60,10 +60,10 @@ ollama pull qwen2.5-coder:7b
 - [Структура репозитория](docs/STRUCTURE.md)
 - [Контракты](docs/CONTRACTS.md)
 - [Live runbook](docs/LIVE_RUNBOOK.md)
-- [Статус продукта](docs/PRODUCT_STATUS.md)
-- [Текущий аудит и очистка](docs/CLEANUP_REPORT.md)
+- [Реестр технического долга](docs/TECHNICAL_DEBT_REGISTRY.md)
 
-## Разработка и проверка
+## Разработ
+ка и проверка
 
 ```bash
 python scripts/project_audit.py
