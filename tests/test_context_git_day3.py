@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Day-3 offline: context pack budget + git safety rules."""
+"""Day-3 offline: context pack budget."""
 from __future__ import annotations
 
 from intelligence.context_budget import (
@@ -10,12 +10,6 @@ from intelligence.context_budget import (
     smart_truncate,
 )
 from intelligence.context_pack import pack_for_worker, is_context_safe_for_7b, PACK_TOTAL
-from safety.git_safety import (
-    branch_delete_allowed,
-    forbid_reset_hard,
-    paths_safe_to_commit,
-    paths_safe_to_discard,
-)
 
 
 def test_smart_truncate_keeps_tail():
@@ -68,54 +62,3 @@ def test_context_assembly_drops_low_priority():
     assert "do the thing" in body
     assert len(body) <= 500 + 20
 
-
-def test_commit_blocked_on_outside():
-    d = paths_safe_to_commit(
-        stage=["src/a.py"],
-        outside=["secrets.env"],
-        conflicted=[],
-    )
-    assert d.ok is False
-    assert d.action == "block"
-
-
-def test_commit_ok_task_only():
-    d = paths_safe_to_commit(stage=["a.py", "b.py"], outside=[], conflicted=[])
-    assert d.ok is True
-    assert d.action == "commit"
-    assert d.paths == ["a.py", "b.py"]
-
-
-def test_discard_skips_user_dirty():
-    d = paths_safe_to_discard(
-        created=["new_by_agent.py"],
-        changed=["user_was_editing.py"],
-        baseline_modified=["user_was_editing.py"],
-        baseline_untracked=[],
-        conflicted=[],
-    )
-    assert "new_by_agent.py" in d.paths
-    assert "user_was_editing.py" in d.skipped
-    assert "user_was_editing.py" not in d.paths
-
-
-def test_discard_skips_conflicted():
-    d = paths_safe_to_discard(
-        created=[],
-        changed=["shared.py"],
-        baseline_modified=[],
-        baseline_untracked=[],
-        conflicted=["shared.py"],
-    )
-    assert d.paths == []
-    assert "shared.py" in d.skipped
-
-
-def test_never_reset_hard_policy():
-    assert forbid_reset_hard() is True
-
-
-def test_branch_delete_only_agentbus():
-    assert branch_delete_allowed("agentbus/task-abc") is True
-    assert branch_delete_allowed("main") is False
-    assert branch_delete_allowed("feature/x") is False

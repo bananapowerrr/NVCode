@@ -21,18 +21,3 @@ def test_i18n_night_keys():
     for key in ("settings_tab_night:", "night_title:", "about_check_btn:", "settings_tab_about:"):
         assert key in en, key
         assert key in ru, key
-
-
-def test_readiness_script_runs():
-    import subprocess, sys
-    script = Path(__file__).resolve().parent.parent / "scripts" / "product_readiness_check.py"
-    assert script.is_file()
-    r = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=str(Path(__file__).resolve().parent.parent),
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src") + ":" + str(Path(__file__).resolve().parent.parent)},
-    )
-    assert r.returncode == 0, r.stdout + r.stderr

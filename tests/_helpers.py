@@ -200,3 +200,69 @@ def stub_executor(runtime, stubbed):
     """rt.executor.run -> stubbed.run(repo, files)."""
     runtime.executor.run = lambda worker, project, message, timeout, files=None: \
         stubbed.run(Path(project), files or [])
+
+# ---------------------------------------------------------------------------
+# Config snapshot sync + dedupe patch helpers (moved from core/runtime_patch.py
+# and core/runtime_dedupe_patch.py; kept as test-only utilities).
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_NAMES = (
+    "BUS_ROOT",
+    "CHANNELS",
+    "DEFAULT_CHANNEL",
+    "MAX_ATTEMPTS",
+    "RETRY_DELAY_SECONDS",
+)
+
+
+def sync_config_snapshots(runtime_cls: type) -> type:
+    """Refresh RuntimeOps config snapshots from the live core.config object.
+
+    core.runtime_ops imports BUS_ROOT / CHANNELS / RETRY_DELAY_SECONDS by value,
+    so later changes to core.config (incl. test monkeypatching) are invisible
+    to the recovery paths (_recover_deferred, _schedule_retry) until this sync
+    runs. Returns the same class.
+    """
+    import core.config as cfg
+    import core.runtime_ops as ops
+
+    for name in SNAPSHOT_NAMES:
+        if hasattr(cfg, name):
+            setattr(ops, name, getattr(cfg, name))
+    runtime_cls._config_synced = True  # type: ignore[attr-defined]
+    return runtime_cls
+
+
+def apply_dedupe(runtime_cls: type) -> type:
+    """Patch runtime_cls in place so process() dedupes. Returns the class.
+
+    core.runtime.Runtime already dedupes internally. This helper applies the
+    same contract to any runtime-like class that exposes process(raw):
+
+    * a task whose fingerprint is already marked as completed is skipped;
+    * the fingerprint is marked only when the result is ok, so a failed task
+      can be retried with the same payload.
+    """
+    from core.dedupe import DedupeRegistry, task_fingerprint
+
+    if getattr(runtime_cls, "_dedupe_patched", False):
+        return runtime_cls
+
+    original_process = runtime_cls.process
+
+    def process(self, raw: dict) -> object:
+        registry = getattr(self, "dedupe", None)
+        if registry is None:
+            registry = DedupeRegistry()
+            self.dedupe = registry
+        fp = task_fingerprint(raw or {})
+        if fp and registry.contains(fp):
+            return "DEDUPED"
+        result = original_process(self, raw)
+        if fp and getattr(result, "ok", False):
+            registry.mark(fp, str((raw or {}).get("id") or ""))
+        return result
+
+    runtime_cls.process = process  # type: ignore[method-assign]
+    runtime_cls._dedupe_patched = True  # type: ignore[attr-defined]
+    return runtime_cls

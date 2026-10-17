@@ -10,8 +10,8 @@ import pytest
 
 def _rt():
     from core.runtime import Runtime
-    from core import runtime_patch
-    runtime_patch.apply(Runtime)
+    from _helpers import sync_config_snapshots
+    sync_config_snapshots(Runtime)
     return Runtime
 
 
