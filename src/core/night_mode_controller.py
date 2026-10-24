@@ -240,6 +240,227 @@ def run_night_session(
 
 
 
+def _resolve_start_state(
+    plan: Any,
+    cfg: NightSessionConfig,
+    *,
+    resume: bool,
+    run_id: str | None,
+    sdir: Path,
+    result: NightSessionResult,
+) -> tuple[dict[str, Any], str, dict[str, Any], set[str]] | None:
+    """Resolve the start state for a night run (new or resumed).
+
+    Returns (state, run_id, plan_info, skip_steps); None means the run is
+    already finished and `result` has been filled for an early return.
+    """
+    from core.night_run_state import (
+        STATUS_ASK_USER,
+        STATUS_COMPLETED,
+        STATUS_STOPPED,
+        find_resumable_run,
+        load_state,
+        new_run_state,
+        resume_plan,
+        state_path_for,
+    )
+
+    existing = None
+    if resume:
+        if run_id:
+            existing = load_state(state_path_for(run_id, sdir))
+        if existing is None:
+            existing = find_resumable_run(sdir)
+        if existing and run_id and existing.get("run_id") != run_id:
+            existing = None
+    if existing and existing.get("status") in (STATUS_COMPLETED, STATUS_STOPPED, STATUS_ASK_USER):
+        # already finished — do not re-execute
+        result.ok = True
+        result.stopped_reason = "run_already_finished"
+        result.done = list(existing.get("completed_steps") or [])
+        result.errors = list(existing.get("failed_steps") or [])
+        result.summary = f"Night run {existing.get('run_id')} already finished"
+        return None
+    if existing:
+        state = dict(existing)
+        rid = str(state["run_id"])
+        plan_info = resume_plan(state)
+        skip = set(plan_info.get("skip_steps") or [])
+    else:
+        steps0 = list(getattr(plan, "steps", None) or [])
+        ids = [
+            str(getattr(s, "id", None) or (s.get("id") if isinstance(s, dict) else "") or i)
+            for i, s in enumerate(steps0)
+        ]
+        state = new_run_state(project_id=cfg.project_id, plan_step_ids=ids, run_id=run_id)
+        rid = str(state["run_id"])
+        plan_info = {"action": "continue", "skip_steps": [], "do_not_auto_done": False}
+        skip = set()
+    return state, rid, plan_info, skip
+
+
+def _select_pending_steps(
+    steps: list[Any],
+    skip: set[str],
+    state: dict[str, Any],
+) -> list[Any]:
+    """Filter plan steps down to those eligible for execution now."""
+    from core.night_run_state import is_step_done
+
+    pending = []
+    for s in steps:
+        st = str(getattr(s, "status", None) or (s.get("status") if isinstance(s, dict) else "") or "PENDING").upper()
+        sid = str(getattr(s, "id", None) or (s.get("id") if isinstance(s, dict) else "") or "")
+        if sid and (sid in skip or is_step_done(state, sid)):
+            continue
+        if st in ("PENDING", "READY", ""):
+            pending.append(s)
+    return pending
+
+
+def _recover_interrupted_step(
+    plan: Any,
+    cfg: NightSessionConfig,
+    plan_info: dict[str, Any],
+    state: dict[str, Any],
+    path: Path,
+    result: NightSessionResult,
+    skip: set[str],
+) -> tuple[dict[str, Any], set[str], bool]:
+    """Handle a step interrupted mid-run (once). stop=True -> caller returns early."""
+    from core.night_run_state import (
+        PHASE_RECOVERY_FINISHED,
+        PHASE_TERMINAL,
+        STATUS_ASK_USER,
+        checkpoint,
+        mark_run_finished,
+        recovery_already_applied,
+    )
+
+    if plan_info.get("action") != "recover_interrupted":
+        return state, skip, False
+    isid = str(plan_info.get("step_id") or "")
+    if not isid or isid in state.get("failed_steps", []):
+        return state, skip, False
+    row = {
+        "id": isid,
+        "attempts": int(state.get("current_attempt") or 0),
+        "metadata": {"failure_kind": "worker_crash", "night_interrupted": True},
+        "result": {"error": plan_info.get("reason") or "interrupted"},
+        "error": plan_info.get("reason") or "interrupted",
+    }
+    try:
+        from core.recovery_controller import run_recovery
+        outcome = run_recovery(row, plan=plan, project_root=cfg.project_root,
+                               apply_plan=cfg.apply_plan_recovery, save_plan=cfg.save_plan)
+        result.recovery_outcomes.append(outcome)
+        action = str((outcome.get("decision") or {}).get("action") or "")
+        if not recovery_already_applied(state, isid, action, int(state.get("current_attempt") or 0)):
+            state = checkpoint(path, state, phase=PHASE_RECOVERY_FINISHED,
+                               step_id=isid, recovery_action=action,
+                               attempt=int(state.get("current_attempt") or 0))
+        if action == "ask_user":
+            mark_run_finished(path, state, status=STATUS_ASK_USER, stop_reason="ask_user")
+            result.stopped_reason = "ask_user"
+            result.summary = "Interrupted step → ask_user"
+            return state, skip, True
+    except Exception as exc:
+        result.recovery_outcomes.append({"ok": False, "enqueued": False, "error": str(exc)})
+    state = checkpoint(path, state, phase=PHASE_TERMINAL, step_id=isid, terminal="ERROR")
+    result.errors.append(isid)
+    skip.add(isid)
+    return state, skip, False
+
+
+def _classify_terminal(exec_out: dict[str, Any]) -> str:
+    """DONE gate: normalize terminal state; downgrade unverified DONE to ERROR."""
+    terminal = str(exec_out.get("terminal_state") or exec_out.get("status") or "").upper()
+    if terminal == "DONE" and exec_out.get("verified") is False:
+        terminal = "ERROR"
+        exec_out["error"] = exec_out.get("error") or "unverified_done_rejected"
+    if terminal == "DONE" and (
+        exec_out.get("verified") is False
+        or (exec_out.get("verified") is not True and exec_out.get("gate_ok") is not True
+            and "verified" in exec_out)
+    ):
+        terminal = "ERROR"
+        exec_out["error"] = exec_out.get("error") or "done_without_verify"
+    return terminal
+
+
+def _build_error_row(
+    payload: dict[str, Any],
+    exec_out: dict[str, Any],
+    sid: str,
+) -> dict[str, Any]:
+    """Build the recovery row dict for a failed step."""
+    row = {
+        "id": payload.get("id") or sid,
+        "attempts": int(exec_out.get("attempts") or 0),
+        "metadata": dict(payload.get("metadata") or {}),
+        "result": dict(exec_out.get("result") or {}),
+        "error": str(exec_out.get("error") or ""),
+    }
+    row["result"].setdefault("error", row["error"])
+    if exec_out.get("worker_result"):
+        row["metadata"]["worker_result"] = exec_out["worker_result"]
+    if exec_out.get("verification"):
+        row["result"]["verification"] = exec_out["verification"]
+    return row
+
+
+def _run_step_recovery(
+    *,
+    row: dict[str, Any],
+    plan: Any,
+    cfg: NightSessionConfig,
+    exec_out: dict[str, Any],
+    state: dict[str, Any],
+    path: Path,
+    result: NightSessionResult,
+    sid: str,
+) -> tuple[dict[str, Any], bool]:
+    """Run recovery for a failed step. stop=True -> caller stops the loop."""
+    from core.night_run_state import (
+        PHASE_RECOVERY_FINISHED,
+        STATUS_ASK_USER,
+        STATUS_STOPPED,
+        checkpoint,
+        mark_run_finished,
+        recovery_already_applied,
+    )
+
+    try:
+        from core.recovery_controller import run_recovery
+        outcome = run_recovery(
+            row, plan=plan, project_root=cfg.project_root,
+            apply_plan=cfg.apply_plan_recovery, save_plan=cfg.save_plan,
+        )
+        result.recovery_outcomes.append(outcome)
+        action = str((outcome.get("decision") or {}).get("action") or "")
+        att = int(exec_out.get("attempts") or 0)
+        if recovery_already_applied(state, sid, action, att):
+            pass  # idempotent
+        else:
+            state = checkpoint(path, state, phase=PHASE_RECOVERY_FINISHED,
+                               step_id=sid, recovery_action=action, attempt=att)
+        if action == "ask_user":
+            mark_run_finished(path, state, status=STATUS_ASK_USER, stop_reason="ask_user")
+            result.stopped_reason = "ask_user"
+            return state, True
+        if action == "stop":
+            mark_run_finished(path, state, status=STATUS_STOPPED, stop_reason="recovery_stop")
+            result.stopped_reason = "recovery_stop"
+            return state, True
+        if action == "replan" and outcome.get("applied"):
+            nid = (outcome.get("plan_replan") or {}).get("new_step_id")
+            if nid:
+                result.replans.append(str(nid))
+    except Exception as exc:
+        result.recovery_outcomes.append({"ok": False, "enqueued": False, "error": str(exc)})
+    return state, False
+
+
 def run_autonomous_loop(
     plan: Any,
     *,
@@ -256,24 +477,20 @@ def run_autonomous_loop(
     """
     from core.night_run_state import (
         MAX_ACTIVE_NIGHT_RUNS,
-        STATUS_ASK_USER,
-        STATUS_COMPLETED,
-        STATUS_STOPPED,
         PHASE_EXECUTION_FINISHED,
-        PHASE_RECOVERY_FINISHED,
         PHASE_STEP_STARTED,
         PHASE_TERMINAL,
         PHASE_VERIFICATION_FINISHED,
+        STATUS_ASK_USER,
+        STATUS_COMPLETED,
+        STATUS_STOPPED,
         acquire_lock,
+        atomic_write_state,
         checkpoint,
         default_state_dir,
-        find_resumable_run,
         is_step_done,
         mark_run_finished,
-        new_run_state,
-        recovery_already_applied,
         release_lock,
-        resume_plan,
         state_path_for,
     )
 
@@ -287,39 +504,10 @@ def run_autonomous_loop(
     result = NightSessionResult()
     t0 = time.monotonic()
 
-    # Resume existing run if present (by run_id or latest RUNNING)
-    existing = None
-    if resume:
-        if run_id:
-            from core.night_run_state import load_state
-            existing = load_state(state_path_for(run_id, sdir))
-        if existing is None:
-            existing = find_resumable_run(sdir)
-        if existing and run_id and existing.get("run_id") != run_id:
-            existing = None
-    if existing and existing.get("status") in (STATUS_COMPLETED, STATUS_STOPPED, STATUS_ASK_USER):
-        # already finished — do not re-execute
-        result.ok = True
-        result.stopped_reason = "run_already_finished"
-        result.done = list(existing.get("completed_steps") or [])
-        result.errors = list(existing.get("failed_steps") or [])
-        result.summary = f"Night run {existing.get('run_id')} already finished"
+    resolved = _resolve_start_state(plan, cfg, resume=resume, run_id=run_id, sdir=sdir, result=result)
+    if resolved is None:
         return result
-    if existing:
-        state = dict(existing)
-        rid = str(state["run_id"])
-        plan_info = resume_plan(state)
-        skip = set(plan_info.get("skip_steps") or [])
-    else:
-        steps0 = list(getattr(plan, "steps", None) or [])
-        ids = [
-            str(getattr(s, "id", None) or (s.get("id") if isinstance(s, dict) else "") or i)
-            for i, s in enumerate(steps0)
-        ]
-        state = new_run_state(project_id=cfg.project_id, plan_step_ids=ids, run_id=run_id)
-        rid = str(state["run_id"])
-        plan_info = {"action": "continue", "skip_steps": [], "do_not_auto_done": False}
-        skip = set()
+    state, rid, plan_info, skip = resolved
 
     lock = acquire_lock(sdir, run_id=rid)
     if not lock.get("ok"):
@@ -330,51 +518,15 @@ def run_autonomous_loop(
 
     path = state_path_for(rid, sdir)
     try:
-        from core.night_run_state import atomic_write_state
         atomic_write_state(path, state)
 
         steps = list(getattr(plan, "steps", None) or [])
         result.steps_planned = len(steps)
-        pending = []
-        for s in steps:
-            st = str(getattr(s, "status", None) or (s.get("status") if isinstance(s, dict) else "") or "PENDING").upper()
-            sid = str(getattr(s, "id", None) or (s.get("id") if isinstance(s, dict) else "") or "")
-            if sid and (sid in skip or is_step_done(state, sid)):
-                continue
-            if st in ("PENDING", "READY", ""):
-                pending.append(s)
+        pending = _select_pending_steps(steps, skip, state)
 
-        # Handle interrupted mid-step once
-        if plan_info.get("action") == "recover_interrupted":
-            isid = str(plan_info.get("step_id") or "")
-            if isid and isid not in state.get("failed_steps", []):
-                row = {
-                    "id": isid,
-                    "attempts": int(state.get("current_attempt") or 0),
-                    "metadata": {"failure_kind": "worker_crash", "night_interrupted": True},
-                    "result": {"error": plan_info.get("reason") or "interrupted"},
-                    "error": plan_info.get("reason") or "interrupted",
-                }
-                try:
-                    from core.recovery_controller import run_recovery
-                    outcome = run_recovery(row, plan=plan, project_root=cfg.project_root,
-                                           apply_plan=cfg.apply_plan_recovery, save_plan=cfg.save_plan)
-                    result.recovery_outcomes.append(outcome)
-                    action = str((outcome.get("decision") or {}).get("action") or "")
-                    if not recovery_already_applied(state, isid, action, int(state.get("current_attempt") or 0)):
-                        state = checkpoint(path, state, phase=PHASE_RECOVERY_FINISHED,
-                                           step_id=isid, recovery_action=action,
-                                           attempt=int(state.get("current_attempt") or 0))
-                    if action == "ask_user":
-                        mark_run_finished(path, state, status=STATUS_ASK_USER, stop_reason="ask_user")
-                        result.stopped_reason = "ask_user"
-                        result.summary = "Interrupted step → ask_user"
-                        return result
-                except Exception as exc:
-                    result.recovery_outcomes.append({"ok": False, "enqueued": False, "error": str(exc)})
-                state = checkpoint(path, state, phase=PHASE_TERMINAL, step_id=isid, terminal="ERROR")
-                result.errors.append(isid)
-                skip.add(isid)
+        state, skip, stop = _recover_interrupted_step(plan, cfg, plan_info, state, path, result, skip)
+        if stop:
+            return result
 
         for step in pending:
             if result.steps_processed >= int(cfg.max_steps or 20):
@@ -403,17 +555,7 @@ def run_autonomous_loop(
             state = checkpoint(path, state, phase=PHASE_EXECUTION_FINISHED, step_id=sid,
                                terminal=str(exec_out.get("terminal_state") or ""))
 
-            terminal = str(exec_out.get("terminal_state") or exec_out.get("status") or "").upper()
-            if terminal == "DONE" and exec_out.get("verified") is False:
-                terminal = "ERROR"
-                exec_out["error"] = exec_out.get("error") or "unverified_done_rejected"
-            if terminal == "DONE" and (
-                exec_out.get("verified") is False
-                or (exec_out.get("verified") is not True and exec_out.get("gate_ok") is not True
-                    and "verified" in exec_out)
-            ):
-                terminal = "ERROR"
-                exec_out["error"] = exec_out.get("error") or "done_without_verify"
+            terminal = _classify_terminal(exec_out)
 
             if exec_out.get("verification") is not None:
                 state = checkpoint(path, state, phase=PHASE_VERIFICATION_FINISHED, step_id=sid, terminal=terminal)
@@ -434,48 +576,11 @@ def run_autonomous_loop(
                 continue
 
             result.errors.append(sid)
-            row = {
-                "id": payload.get("id") or sid,
-                "attempts": int(exec_out.get("attempts") or 0),
-                "metadata": dict(payload.get("metadata") or {}),
-                "result": dict(exec_out.get("result") or {}),
-                "error": str(exec_out.get("error") or ""),
-            }
-            row["result"].setdefault("error", row["error"])
-            if exec_out.get("worker_result"):
-                row["metadata"]["worker_result"] = exec_out["worker_result"]
-            if exec_out.get("verification"):
-                row["result"]["verification"] = exec_out["verification"]
-
-            try:
-                from core.recovery_controller import run_recovery
-                outcome = run_recovery(
-                    row, plan=plan, project_root=cfg.project_root,
-                    apply_plan=cfg.apply_plan_recovery, save_plan=cfg.save_plan,
-                )
-                result.recovery_outcomes.append(outcome)
-                action = str((outcome.get("decision") or {}).get("action") or "")
-                att = int(exec_out.get("attempts") or 0)
-                if recovery_already_applied(state, sid, action, att):
-                    pass  # idempotent
-                else:
-                    state = checkpoint(path, state, phase=PHASE_RECOVERY_FINISHED,
-                                       step_id=sid, recovery_action=action, attempt=att)
-                if action == "ask_user":
-                    mark_run_finished(path, state, status=STATUS_ASK_USER, stop_reason="ask_user")
-                    result.stopped_reason = "ask_user"
-                    break
-                if action == "stop":
-                    mark_run_finished(path, state, status=STATUS_STOPPED, stop_reason="recovery_stop")
-                    result.stopped_reason = "recovery_stop"
-                    break
-                if action == "replan" and outcome.get("applied"):
-                    nid = (outcome.get("plan_replan") or {}).get("new_step_id")
-                    if nid:
-                        result.replans.append(str(nid))
-            except Exception as exc:
-                result.recovery_outcomes.append({"ok": False, "enqueued": False, "error": str(exc)})
-
+            row = _build_error_row(payload, exec_out, sid)
+            state, stop = _run_step_recovery(row=row, plan=plan, cfg=cfg, exec_out=exec_out,
+                                             state=state, path=path, result=result, sid=sid)
+            if stop:
+                break
             state = checkpoint(path, state, phase=PHASE_TERMINAL, step_id=sid, terminal="ERROR")
 
         result.duration_sec = time.monotonic() - t0
@@ -497,7 +602,6 @@ def run_autonomous_loop(
         return result
     finally:
         release_lock(sdir, run_id=rid)
-
 
 
 def night_mode_status() -> dict[str, Any]:
