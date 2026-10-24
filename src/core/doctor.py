@@ -121,14 +121,8 @@ class DoctorReport:
         return "\n".join(lines)[:max_len]
 
 
-def run_doctor() -> DoctorReport:
-    """Collect readiness checks without raising."""
-    rep = DoctorReport()
-
-    def add(cid: str, ok: bool, detail: str, *, critical: bool = False) -> None:
-        rep.checks.append(Check(cid, bool(ok), critical, detail))
-
-    # --- paths / config ---
+def _check_config(add) -> None:
+    """TD-017: пути/конфиг — код перенесён из run_doctor без изменений."""
     try:
         from core.config import WORKERS_FILE, PROVIDERS_FILE, BASE_DIR
         add("workers_yaml", Path(WORKERS_FILE).is_file(), str(WORKERS_FILE), critical=True)
@@ -137,7 +131,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("config", False, f"{type(exp).__name__}: {exp}", critical=True)
 
-    # --- policy ---
+
+def _check_policy(add) -> tuple[bool, bool]:
+    """TD-017: политика; возвращает (allow_cloud, prefer_local)."""
     try:
         from core.policy import load_policy
         pol = load_policy()
@@ -149,11 +145,15 @@ def run_doctor() -> DoctorReport:
         )
         allow_cloud = bool(pol.allow_cloud)
         prefer_local = bool(getattr(pol, "prefer_local", True))
+        return allow_cloud, prefer_local
     except Exception as exp:
         allow_cloud, prefer_local = True, True
         add("policy", False, str(exp), critical=False)
+        return allow_cloud, prefer_local
 
-    # --- local runtimes ---
+
+def _check_local_runtimes(add, *, prefer_local: bool, allow_cloud: bool) -> bool:
+    """TD-017: локальные рантаймы; возвращает local_ok."""
     local_ok = False
     local_detail = "none"
     try:
@@ -175,8 +175,11 @@ def run_doctor() -> DoctorReport:
         local_detail,
         critical=bool(prefer_local and not allow_cloud),
     )
+    return local_ok
 
-    # --- cloud keys (only critical if policy needs cloud and no local) ---
+
+def _check_worker_capacity(add, *, local_ok: bool) -> None:
+    """TD-017: ёмкость воркеров + платный гейт (ALLOW_PAID)."""
     cloud_usable = False
     try:
         from providers.registry import load_providers
@@ -243,7 +246,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("worker_capacity", False, str(exp), critical=True)
 
-    # --- worker CLI tools (warning only; live needs these) ---
+
+def _check_cli_tools(add, *, local_ok: bool) -> None:
+    """TD-017: CLI-инструменты воркеров (ollama/aider/opencode)."""
     try:
         import os
         import shutil
@@ -277,7 +282,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("cli_tools", False, str(exp), critical=False)
 
-    # --- Day-1: Ollama + preferred model + live path (soft probes, never raise) ---
+
+def _check_worker_stack(add, *, prefer_local: bool, allow_cloud: bool) -> None:
+    """TD-017: Day-1 soft-пробы Ollama/модели/live-path."""
     try:
         from core.worker_diagnostics import run_worker_stack_report
         stack = run_worker_stack_report(timeout=1.5)
@@ -288,7 +295,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("live_path", False, f"worker_diagnostics: {exp}", critical=False)
 
-    # --- desktop queue path ---
+
+def _check_desktop_queue(add) -> None:
+    """TD-017: путь desktop-очереди."""
     try:
         from core.local_queue import get_local_queue
         from core.config import BASE_DIR
@@ -297,7 +306,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("desktop_queue", False, str(exp), critical=False)
 
-    # --- phone bus optional ---
+
+def _check_phone_bus(add) -> None:
+    """TD-017: опциональная телефонная шина."""
     try:
         from core.feature_flags import is_enabled
         phone = is_enabled("phone_filebus", default=False)
@@ -305,14 +316,18 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("phone_filebus", False, str(exp), critical=False)
 
-    # --- strict verify ---
+
+def _check_strict_verify(add) -> None:
+    """TD-017: AGENTBUS_STRICT_VERIFY."""
     import os
     strict = (os.getenv("AGENTBUS_STRICT_VERIFY") or "1").strip().lower() in (
         "1", "true", "yes", "on",
     )
     add("strict_verify", True, f"AGENTBUS_STRICT_VERIFY={'1' if strict else '0'}", critical=False)
 
-    # --- UI optional ---
+
+def _check_ui_deps(add) -> None:
+    """TD-017: зависимости UI (customtkinter)."""
     try:
         import customtkinter  # noqa: F401
         add("ui_deps", True, "customtkinter OK", critical=False)
@@ -320,7 +335,8 @@ def run_doctor() -> DoctorReport:
         add("ui_deps", False, "pip install -r requirements-ui.txt", critical=False)
 
 
-    # --- concurrency safety (P0.5) ---
+def _check_max_parallel(add) -> None:
+    """TD-017: параллельность проектов (P0.5)."""
     try:
         from core.config import MAX_PARALLEL_PROJECTS
         mp = int(MAX_PARALLEL_PROJECTS or 1)
@@ -334,7 +350,9 @@ def run_doctor() -> DoctorReport:
     except Exception as exp:
         add("max_parallel", True, f"default 1 ({exp})", critical=False)
 
-    # --- feature flags (informational) ---
+
+def _check_feature_flags(add) -> None:
+    """TD-017: feature flags (informational)."""
     try:
         from core.feature_flags import list_flags
         flags = list_flags() if callable(list_flags) else {}
@@ -353,7 +371,9 @@ def run_doctor() -> DoctorReport:
         except Exception as exp:
             add("feature_flags", False, str(exp)[:120], critical=False)
 
-    # --- git (optional, for diff/rollback) ---
+
+def _check_git(add) -> None:
+    """TD-017: git-репозиторий (diff/rollback)."""
     try:
         import subprocess
         from core.config import BASE_DIR
@@ -365,6 +385,53 @@ def run_doctor() -> DoctorReport:
         add("git", ok_git, "repo OK" if ok_git else "не git-репозиторий (diff/rollback ограничены)", critical=False)
     except Exception as exp:
         add("git", False, str(exp)[:120], critical=False)
+
+
+def run_doctor() -> DoctorReport:
+    """Collect readiness checks without raising."""
+    rep = DoctorReport()
+
+    def add(cid: str, ok: bool, detail: str, *, critical: bool = False) -> None:
+        rep.checks.append(Check(cid, bool(ok), critical, detail))
+
+    # --- paths / config ---
+    _check_config(add)
+
+    # --- policy ---
+    allow_cloud, prefer_local = _check_policy(add)
+
+    # --- local runtimes ---
+    local_ok = _check_local_runtimes(add, prefer_local=prefer_local, allow_cloud=allow_cloud)
+
+    # --- cloud keys (only critical if policy needs cloud and no local) ---
+    _check_worker_capacity(add, local_ok=local_ok)
+
+    # --- worker CLI tools (warning only; live needs these) ---
+    _check_cli_tools(add, local_ok=local_ok)
+
+    # --- Day-1: Ollama + preferred model + live path (soft probes, never raise) ---
+    _check_worker_stack(add, prefer_local=prefer_local, allow_cloud=allow_cloud)
+
+    # --- desktop queue path ---
+    _check_desktop_queue(add)
+
+    # --- phone bus optional ---
+    _check_phone_bus(add)
+
+    # --- strict verify ---
+    _check_strict_verify(add)
+
+    # --- UI optional ---
+    _check_ui_deps(add)
+
+    # --- concurrency safety (P0.5) ---
+    _check_max_parallel(add)
+
+    # --- feature flags (informational) ---
+    _check_feature_flags(add)
+
+    # --- git (optional, for diff/rollback) ---
+    _check_git(add)
 
     return rep
 
