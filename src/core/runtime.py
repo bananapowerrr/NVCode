@@ -792,26 +792,23 @@ class Runtime(RuntimeOps, RuntimeProcess):
 
 
 def diagnose() -> int:
+    """TD-020: единая диагностика живёт в dispatcher_main.run_diagnose.
+
+    Общие секции (конфиг, инструменты, проекты, модули, провайдеры/воркеры,
+    бюджет/метрики, окружение, desktop-канал, doctor go/no-go) печатает
+    общий diagnose. Ниже — только секции, которых в нём нет: кэш решений,
+    уроки, плагины/пресеты, профили моделей, локальные рантаймы, реестр
+    расширений и статус-борда.
+    """
     print("=== AgentBus diagnose ===")
-    from core.config import (BUS_ROOT, PROJECT_ROOT, PROVIDERS_FILE, WORKERS_FILE,
-                        ALLOW_PAID, USE_DYNAMIC, OPENCODE_TIMEOUT,
-                        AIDER_PATH, OPENCODE_PATH, OLLAMA_PATH)
-    from shutil import which
-    print(f"BUS_ROOT          : {BUS_ROOT}")
-    print(f"PROJECT_ROOT      : {PROJECT_ROOT}")
-    print(f"PROVIDERS_FILE    : {PROVIDERS_FILE} exists={Path(PROVIDERS_FILE).is_file()}")
-    print(f"WORKERS_FILE      : {WORKERS_FILE} exists={Path(WORKERS_FILE).is_file()}")
-    print(f"ALLOW_PAID        : {ALLOW_PAID}")
-    print(f"USE_DYNAMIC       : {USE_DYNAMIC}")
-    print(f"OPENCODE_TIMEOUT  : {OPENCODE_TIMEOUT}")
-    print(f"TASK_CHANNEL      : file-bus (Dropbox/local)")
     try:
-        from utils.metrics import GLOBAL_METRICS
-        from utils.budget import GLOBAL_TRACKER
-        print(f"metrics           : {GLOBAL_METRICS.get_summary()}")
-        print(f"budget_tracker    : errors={GLOBAL_TRACKER.get_usage_report().get('errors')}")
+        from core.dispatcher_main import run_diagnose
+        code = run_diagnose()
     except Exception as e:
-        print(f"metrics ERR       : {e}")
+        print(f"diagnose ERR      : {e}")
+        code = 1
+
+    # --- секции, специфичные для runtime ---
     try:
         from intelligence.solution_cache import GLOBAL_CACHE
         print(f"solution_cache    : {GLOBAL_CACHE.stats()}")
@@ -822,48 +819,6 @@ def diagnose() -> int:
         print(f"lessons           : {GLOBAL_LEARNER.stats()}")
     except Exception as e:
         print(f"lessons ERR       : {e}")
-
-    try:
-        providers = load_providers()
-        print(f"providers loaded  : {len(providers)}")
-        for p in providers:
-            flag = "OK" if p.is_usable() else "skip"
-            print(f"  [{flag}] {p.id:16} billing={p.billing:6} models={len(p.models)}")
-        cap = FreeCapacityManager(providers)
-        print(f"deferred_snapshot : {cap.deferred_snapshot()}")
-    except Exception as e:
-        print(f"providers ERR     : {e}")
-    try:
-        workers = load_workers()
-        print(f"workers loaded    : {len(workers)}")
-        for w in workers:
-            print(f"  [{'ON' if w.enabled else 'off'}] {w.name:22} harness={w.harness:8} provider={w.provider} timeout={w.timeout}")
-    except Exception as e:
-        print(f"workers ERR       : {e}")
-    for name, path in (("aider", AIDER_PATH), ("opencode", OPENCODE_PATH), ("ollama", OLLAMA_PATH)):
-        print(f"CLI {name:10}: {which(path) or which(name) or 'NOT FOUND'}")
-    try:
-        health = HealthRegistry()
-        for w in load_workers():
-            health.register(w.name, w.max_parallel)
-            health.state(w.name)
-        snap = health.operator_snapshot() if hasattr(health, "operator_snapshot") else []
-        print(f"health workers    : {len(snap) if isinstance(snap, list) else snap}")
-        for r in (snap or [])[:6]:
-            print(f"  {r.get('name','?'):22} {r.get('status','?')}")
-    except Exception as e:
-        print(f"health ERR        : {e}")
-    try:
-        bus = FileBus(BUS_ROOT, CHANNELS)
-        bus.ensure()
-        print(f"file-bus          : OK ({BUS_ROOT})")
-    except Exception as e:
-        print(f"file-bus ERR      : {e}")
-    try:
-        from utils.diagnose import diagnose_environment
-        diagnose_environment()
-    except Exception as e:
-        print(f"environment ERR   : {e}")
     try:
         from core.plugin_registry import status_dict
         from core.feature_flags import list_presets
@@ -899,23 +854,6 @@ def diagnose() -> int:
     except Exception as e:
         print(f"adapters ERR      : {e}")
     try:
-        from core.policy import load_policy
-        pol = load_policy()
-        print(f"policy            : {pol.name} local={pol.prefer_local} cloud={pol.allow_cloud} privacy={pol.privacy}")
-    except Exception as e:
-        print(f"policy ERR        : {e}")
-    try:
-        from core.backend import build_default_registry
-        reg = build_default_registry()
-        snap = reg.snapshot()
-        local = reg.local_available()
-        print(f"backends          : {len(snap)} (from workers)")
-        print(f"local backends    : {local or '—'}")
-        for b in snap[:12]:
-            print(f"  [{b.status:11}] {b.id:22} kind={b.kind} offline={b.capabilities.get('offline')}")
-    except Exception as e:
-        print(f"backends ERR      : {e}")
-    try:
         from core.plugin_registry import discover_plugins, load_extension_manifest, PLUGIN_MODULES
         load_extension_manifest()
         disc = discover_plugins(force=True)
@@ -940,8 +878,7 @@ def diagnose() -> int:
         print_board()
     except Exception as e:
         print(f"status_board ERR  : {e}")
-    print("READY")
-    return 0
+    return code
 
 
 def main(argv: list[str] | None = None) -> None:
