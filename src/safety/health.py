@@ -46,6 +46,7 @@ class WorkerState:
     consecutive_failures: int = 0
     consecutive_timeouts: int = 0
     consecutive_verify_failures: int = 0
+    consecutive_loop_errors: int = 0
     cooldown_until: float = 0.0
     rate_limit_until: float = 0.0
     latency_avg: float = 0.0
@@ -53,6 +54,7 @@ class WorkerState:
     fail_count: int = 0
     timeout_count: int = 0
     verify_fail_count: int = 0
+    loop_error_count: int = 0
     last_success: float = 0.0
     last_failure: float = 0.0
     last_verify_failure: float = 0.0
@@ -72,6 +74,7 @@ class WorkerState:
             "consecutive_failures": self.consecutive_failures,
             "consecutive_timeouts": self.consecutive_timeouts,
             "consecutive_verify_failures": self.consecutive_verify_failures,
+            "consecutive_loop_errors": self.consecutive_loop_errors,
             "cooldown_until": self.cooldown_until,
             "rate_limit_until": self.rate_limit_until,
             "latency_avg": self.latency_avg,
@@ -80,6 +83,7 @@ class WorkerState:
             "fail_count": self.fail_count,
             "timeout_count": self.timeout_count,
             "verify_fail_count": self.verify_fail_count,
+            "loop_error_count": self.loop_error_count,
             "last_success": self.last_success,
             "last_failure": self.last_failure,
             "last_verify_failure": self.last_verify_failure,
@@ -112,9 +116,11 @@ class HealthRegistry:
             return
         fields = (
             "status", "failures", "consecutive_failures", "consecutive_timeouts",
-            "consecutive_verify_failures", "cooldown_until", "rate_limit_until",
+            "consecutive_verify_failures", "consecutive_loop_errors",
+            "cooldown_until", "rate_limit_until",
             "latency_avg", "success_count", "fail_count", "timeout_count",
-            "verify_fail_count", "last_success", "last_failure", "last_verify_failure",
+            "verify_fail_count", "loop_error_count", "last_success", "last_failure",
+            "last_verify_failure",
             "tasks_completed", "last_error",
         )
         for name, raw in (data or {}).items():
@@ -194,6 +200,7 @@ class HealthRegistry:
         st.consecutive_failures = 0
         st.consecutive_timeouts = 0
         st.consecutive_verify_failures = 0
+        st.consecutive_loop_errors = 0
         # Успех доказывает, что воркер жив: снимаем cooldown. Иначе после
         # серии сбоев ступени разгоняются до 1800с, а единственный рабочий
         # воркер остаётся выбитым из пула даже после удачной задачи
@@ -243,6 +250,8 @@ class HealthRegistry:
             return
         if _is_loop_error(error, status):
             st.status = "LOOP"
+            st.consecutive_loop_errors += 1
+            st.loop_error_count += 1
             st.cooldown_until = time.monotonic() + self._loop_cooldown(st)
             self.save_state()
             return
@@ -348,6 +357,7 @@ class HealthRegistry:
                 "detail": detail,
                 "success_rate": round(st.success_rate, 2),
                 "consecutive_verify_failures": st.consecutive_verify_failures,
+                "consecutive_loop_errors": st.consecutive_loop_errors,
             })
         return rows
 
@@ -391,6 +401,8 @@ class HealthRegistry:
                 "latency_avg": round(st.latency_avg, 2),
                 "tasks_completed": st.tasks_completed,
                 "failures": st.failures,
+                "consecutive_loop_errors": st.consecutive_loop_errors,
+                "loop_error_count": st.loop_error_count,
                 "cooldown_sec": int(cd_left),
                 "rate_limit_sec": int(rl_left),
                 "last_error": (st.last_error or "")[:120],
