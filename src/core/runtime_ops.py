@@ -274,42 +274,8 @@ class RuntimeOps:
         self.bus.write(task.channel, state, f"{task.id}.json",
                        json.dumps(payload, ensure_ascii=False, indent=2))
 
-    def finish_task(
-        self,
-        task: "Task",
-        terminal_state: str,
-        result: dict | None = None,
-        *,
-        error: str = "",
-        from_folder: str = "processing",
-        emit: bool = True,
-        queue_terminal: bool = True,
-    ) -> str:
-        """R1 unified terminal path: evidence → bus → queue → emit.
-
-        Returns normalized terminal state (DONE/ERROR/DEFERRED).
-        Does not change FSM vocabulary. Demotes DONE without verification.
-        """
-        from core.terminal_path import (
-            FOLDER,
-            build_terminal_result,
-            enforce_done_contract,
-            normalize_terminal_state,
-        )
-
-        res = build_terminal_result(
-            error=error,
-            worker=str(
-                (result.get("worker") if isinstance(result, dict) else "")
-                or getattr(task, "worker", "")
-                or ""
-            ),
-            extra=dict(result or {}),
-        )
-        if error and not res.get("error"):
-            res["error"] = str(error)[:2000]
-        state, res = enforce_done_contract(terminal_state, res)
-        # DEV-001: evidence-backed decision (may demote DONE)
+    def _apply_runtime_decision(self, task, state: str, res: dict, error: str) -> str:
+        """DEV-001: evidence-backed decision (may demote DONE). Returns state."""
         try:
             from core.runtime_decision import decide_terminal, evidence_snapshot
             contract = getattr(self, "_last_execution_contract", None) or {}
@@ -345,7 +311,10 @@ class RuntimeOps:
             }
         except Exception:
             pass
-        # R2: fold last ExecutionResult contract into terminal result
+        return state
+
+    def _fold_execution_contract(self, res: dict) -> None:
+        """R2: fold last ExecutionResult contract into terminal result."""
         try:
             contract = getattr(self, "_last_execution_contract", None)
             if isinstance(contract, dict):
@@ -357,6 +326,9 @@ class RuntimeOps:
                 res.setdefault("exec_ok", contract.get("ok"))
         except Exception:
             pass
+
+    def _stash_evidence_preview(self, task, res: dict, state: str) -> None:
+        """Build execution evidence preview stashed for the _save merge."""
         try:
             from core.execution_evidence import evidence_from_execution_result
 
@@ -383,15 +355,11 @@ class RuntimeOps:
             }
         except Exception:
             pass
-        folder = FOLDER.get(state)
-        if not folder:
-            state = "ERROR"
-            folder = "errors"
-            res.setdefault("error", f"invalid_terminal:{terminal_state}")
 
-        # GLOBAL_METRICS on every terminal transition.
+    def _record_terminal_metrics(self, task, res: dict, state: str, error: str) -> None:
+        """GLOBAL_METRICS on every terminal transition (+ attempts on result)."""
         # Раньше счётчики обновляли только rp_* (кэш/LLM/skills), а сам
-        # finish_task — нет: из-за этого в лог уходило вечное
+        # terminal path — нет: из-за этого в лог уходило вечное
         # "metrics tasks=0 ok=0 err=0", хотя задачи падали с ERROR.
         try:
             from utils.metrics import GLOBAL_METRICS
@@ -412,7 +380,8 @@ class RuntimeOps:
         except Exception:
             pass
 
-        # last_result + worker_result on every terminal (WIRE-003: always on ERROR)
+    def _annotate_last_result(self, task, res: dict, state: str, error: str) -> None:
+        """last_result + worker_result on every terminal (WIRE-003: always on ERROR)."""
         try:
             meta_lr = dict(getattr(task, "metadata", None) or {})
             meta_lr["last_result"] = {
@@ -470,10 +439,13 @@ class RuntimeOps:
         except Exception:
             pass
 
-        # bus move processing → terminal folder FIRST.
-        # FileBus.move is rename-based, so moving after _save would overwrite the
-        # terminal payload with the stale processing snapshot (status=CLAIMED +
-        # phase placeholder), losing error/evidence/verification.
+    def _move_to_terminal_folder(self, task, from_folder: str, folder: str) -> None:
+        """bus move processing → terminal folder FIRST.
+
+        FileBus.move is rename-based, so moving after _save would overwrite the
+        terminal payload with the stale processing snapshot (status=CLAIMED +
+        phase placeholder), losing error/evidence/verification.
+        """
         try:
             fname = f"{task.id}.json"
             self.bus.move(task.channel, from_folder, folder, fname)
@@ -483,7 +455,8 @@ class RuntimeOps:
             except Exception:
                 pass
 
-        # lease sidecar must not survive a terminal transition
+    def _drop_task_lease(self, task, from_folder: str) -> None:
+        """Lease sidecar must not survive a terminal transition."""
         try:
             if from_folder:
                 lease = (
@@ -495,51 +468,46 @@ class RuntimeOps:
         except Exception:
             pass
 
-        # _save LAST so the terminal payload is the one that persists
+    def _queue_terminal(self, task, res: dict, state: str, error: str) -> None:
+        """Report terminal state to the queue (finish for DONE, terminal otherwise)."""
         try:
-            self._save(task, folder, res)
+            if state == "DONE":
+                self.queue.finish(
+                    task.id,
+                    getattr(self, "worker_id", "") or "",
+                    "DONE",
+                    error="",
+                    attempts=int(getattr(task, "attempts", 0) or 0),
+                )
+            else:
+                self.queue.terminal(
+                    task.id,
+                    state,
+                    error=str(res.get("error") or error or "")[:500],
+                    attempts=int(getattr(task, "attempts", 0) or 0),
+                )
         except Exception as exc:
             try:
-                self.log.write(f"finish_task save: {exc}")
+                self.log.write(f"finish_task queue: {exc}")
             except Exception:
                 pass
 
-        if queue_terminal:
-            try:
-                if state == "DONE":
-                    self.queue.finish(
-                        task.id,
-                        getattr(self, "worker_id", "") or "",
-                        "DONE",
-                        error="",
-                        attempts=int(getattr(task, "attempts", 0) or 0),
-                    )
-                else:
-                    self.queue.terminal(
-                        task.id,
-                        state,
-                        error=str(res.get("error") or error or "")[:500],
-                        attempts=int(getattr(task, "attempts", 0) or 0),
-                    )
-            except Exception as exc:
-                try:
-                    self.log.write(f"finish_task queue: {exc}")
-                except Exception:
-                    pass
+    def _emit_terminal(self, task, res: dict, state: str, folder: str) -> None:
+        """Emit terminal event for UI/bus consumers."""
+        try:
+            msg = str(res.get("error") or state)[:300]
+            self._emit(
+                state,
+                msg,
+                task_id=getattr(task, "id", ""),
+                worker=str(res.get("worker") or getattr(self, "worker_id", "") or ""),
+                payload={"terminal": state, "folder": folder},
+            )
+        except Exception:
+            pass
 
-        if emit:
-            try:
-                msg = str(res.get("error") or state)[:300]
-                self._emit(
-                    state,
-                    msg,
-                    task_id=getattr(task, "id", ""),
-                    worker=str(res.get("worker") or getattr(self, "worker_id", "") or ""),
-                    payload={"terminal": state, "folder": folder},
-                )
-            except Exception:
-                pass
-
+    def _log_terminal(self, task, res: dict, state: str, error: str) -> None:
+        """Log terminal transition; ERROR must expose its reason (and traceback)."""
         try:
             tid = getattr(task, "id", "")
             self.log.write(f"finish_task {tid} → {state}")
@@ -571,6 +539,71 @@ class RuntimeOps:
                         )
         except Exception:
             pass
+
+    def finish_task(
+        self,
+        task: "Task",
+        terminal_state: str,
+        result: dict | None = None,
+        *,
+        error: str = "",
+        from_folder: str = "processing",
+        emit: bool = True,
+        queue_terminal: bool = True,
+    ) -> str:
+        """R1 unified terminal path: evidence → bus → queue → emit.
+
+        Returns normalized terminal state (DONE/ERROR/DEFERRED).
+        Does not change FSM vocabulary. Demotes DONE without verification.
+        """
+        from core.terminal_path import (
+            FOLDER,
+            build_terminal_result,
+            enforce_done_contract,
+        )
+
+        res = build_terminal_result(
+            error=error,
+            worker=str(
+                (result.get("worker") if isinstance(result, dict) else "")
+                or getattr(task, "worker", "")
+                or ""
+            ),
+            extra=dict(result or {}),
+        )
+        if error and not res.get("error"):
+            res["error"] = str(error)[:2000]
+        state, res = enforce_done_contract(terminal_state, res)
+
+        state = self._apply_runtime_decision(task, state, res, error)
+        self._fold_execution_contract(res)
+        self._stash_evidence_preview(task, res, state)
+
+        folder = FOLDER.get(state)
+        if not folder:
+            state = "ERROR"
+            folder = "errors"
+            res.setdefault("error", f"invalid_terminal:{terminal_state}")
+
+        self._record_terminal_metrics(task, res, state, error)
+        self._annotate_last_result(task, res, state, error)
+        self._move_to_terminal_folder(task, from_folder, folder)
+        self._drop_task_lease(task, from_folder)
+
+        # _save LAST so the terminal payload is the one that persists
+        try:
+            self._save(task, folder, res)
+        except Exception as exc:
+            try:
+                self.log.write(f"finish_task save: {exc}")
+            except Exception:
+                pass
+
+        if queue_terminal:
+            self._queue_terminal(task, res, state, error)
+        if emit:
+            self._emit_terminal(task, res, state, folder)
+        self._log_terminal(task, res, state, error)
         return state
 
 
