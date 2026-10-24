@@ -46,3 +46,22 @@ def test_short_lines_ignored():
     g = LoopGuard(same_line_limit=3)
     for _ in range(10):
         assert g.feed_line("ok") is None
+
+
+def test_collapse_numbers_default_off():
+    """TD-030: числовой прогресс — не цикл, пока collapse_numbers=False (default)."""
+    g = LoopGuard(same_line_limit=8)
+    for i in range(20):
+        assert g.feed_line(f"Working on part {i}") is None
+
+    # Тот же поток с collapse_numbers=True: строки схлопываются в
+    # "Working on part #", и 8-я подряд — уже зацикливание.
+    g2 = LoopGuard(same_line_limit=8, ngram_limit=99, collapse_numbers=True)
+    hit = None
+    for i in range(20):
+        hit = g2.feed_line(f"Working on part {i}")
+        if hit is not None:
+            break
+    assert hit is not None
+    assert hit.kind == "same_line"
+    assert hit.repeats == 8
