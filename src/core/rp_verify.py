@@ -19,6 +19,13 @@ try:
 except Exception:  # pragma: no cover
     VERIFY_FAIL_MAX = 3
 
+try:
+    from safety.gitops import build_commit_message
+except Exception:  # pragma: no cover
+    def build_commit_message(task_id: str, executor: str, files: list) -> str:
+        names = ", ".join(str(f) for f in (files or [])[:4])
+        return f"[agentbus] task {task_id} by {executor}: {names}"
+
 
 class RPVerifyMixin:
     def _phase_verify_and_commit(
@@ -109,43 +116,12 @@ class RPVerifyMixin:
 
         if not ok:
             result.stderr, result.ok = verify_error, False
-            try:
-                self._bump_verify_fails(task, verify_error or "")
-            except Exception as exp:
-                try:
-                    self.log.write(
-                        f"_bump_verify_fails: {type(exp).__name__}: {exp}"
-                    )
-                except Exception:
-                    pass
-            try:
-                from utils.metrics import GLOBAL_METRICS
-                meta_v = (
-                    task.metadata
-                    if isinstance(getattr(task, "metadata", None), dict)
-                    else {}
-                )
-                lvl = int(
-                    meta_v.get("verify_ladder")
-                    or meta_v.get("verify_max_level")
-                    or 0
-                )
-                GLOBAL_METRICS.record_verify_ladder(
-                    success=False,
-                    level=lvl,
-                )
-            except Exception:
-                pass
-            try:
-                from intelligence.pev_loop import verify_retry_message
-                message = verify_retry_message(
-                    message,
-                    verify_error or "",
-                    int(task.attempts or 1),
-                )
-                attempt_messages = {}
-            except Exception:
-                pass
+            message, attempt_messages = self._handle_verify_failure(
+                task=task,
+                verify_error=verify_error or "",
+                message=message,
+                attempt_messages=attempt_messages,
+            )
             return message, attempt_messages, commit_sha
 
         if plan is not None and not getattr(plan, "commitable", True):
@@ -154,110 +130,203 @@ class RPVerifyMixin:
             return message, attempt_messages, commit_sha
 
         if plan is not None and getattr(plan, "stage", None):
-            try:
-                from core.task_safety import check_diff_budget
-
-                budget = check_diff_budget(
-                    root=str(ctx.root),
-                    stage_paths=list(plan.stage or []),
-                    task=task,
-                )
-                if not budget.get("ok", True):
-                    result.ok = False
-                    result.stderr = str(
-                        budget.get("reason")
-                        or "diff budget exceeded"
-                    )
-                    try:
-                        self._emit(
-                            "DIFF_BUDGET",
-                            result.stderr[:300],
-                            task_id=task.id,
-                            worker=worker.name,
-                            payload=budget,
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        from utils.metrics import GLOBAL_METRICS
-                        GLOBAL_METRICS.record("diff_budget_exceeded")
-                    except Exception:
-                        pass
-                    return message, attempt_messages, commit_sha
-
-            except Exception as exc:
-                # Diff-budget is a safety gate. If it cannot be evaluated,
-                # never continue as if verification succeeded.
-                result.ok = False
-                result.stderr = (
-                    f"diff_budget_check_exception: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                try:
-                    self.log.write(result.stderr)
-                except Exception:
-                    pass
+            if not self._diff_budget_gate(
+                result=result,
+                task=task,
+                ctx=ctx,
+                worker=worker,
+                plan=plan,
+            ):
                 return message, attempt_messages, commit_sha
 
         # Commit is part of the verified terminal path.
         # A commit failure must invalidate the successful execution.
-        if result.ok and plan is not None and gitops is not None:
-            try:
-                commit_sha = gitops.commit_plan(
-                    plan,
-                    task=task,
-                ) or ""
-            except Exception as exc:
-                result.ok = False
-                result.stderr = (
-                    f"git_commit_failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                try:
-                    self.log.write(result.stderr)
-                except Exception:
-                    pass
-                return message, attempt_messages, commit_sha
-
+        # TD-001: пустой stage = нет изменений задачи — коммит не нужен
+        # (GitOps.commit по контракту возвращает "" для пустого списка путей).
+        if (
+            result.ok
+            and plan is not None
+            and gitops is not None
+            and getattr(plan, "stage", None)
+        ):
+            commit_sha = self._commit_verified_plan(
+                result=result,
+                task=task,
+                worker=worker,
+                gitops=gitops,
+                plan=plan,
+            )
             if not commit_sha:
-                result.ok = False
-                result.stderr = "git_commit_failed: empty commit SHA"
-                try:
-                    self.log.write(result.stderr)
-                except Exception:
-                    pass
                 return message, attempt_messages, commit_sha
 
         if result.ok:
+            self._record_verify_success(task)
+
+        return message, attempt_messages, commit_sha
+
+    def _handle_verify_failure(
+        self,
+        *,
+        task,
+        verify_error: str,
+        message: str,
+        attempt_messages: dict,
+    ) -> tuple[str, dict]:
+        """Bump verify budget, record ladder miss, build retry message."""
+        try:
+            self._bump_verify_fails(task, verify_error or "")
+        except Exception as exp:
             try:
-                self._reset_verify_fails(task)
-            except Exception as exp:
-                try:
-                    self.log.write(
-                        f"_reset_verify_fails: {type(exp).__name__}: {exp}"
-                    )
-                except Exception:
-                    pass
-            try:
-                from utils.metrics import GLOBAL_METRICS
-                meta_v = (
-                    task.metadata
-                    if isinstance(getattr(task, "metadata", None), dict)
-                    else {}
-                )
-                lvl = int(
-                    meta_v.get("verify_ladder")
-                    or meta_v.get("verify_max_level")
-                    or 0
-                )
-                GLOBAL_METRICS.record_verify_ladder(
-                    success=True,
-                    level=lvl,
+                self.log.write(
+                    f"_bump_verify_fails: {type(exp).__name__}: {exp}"
                 )
             except Exception:
                 pass
+        try:
+            from utils.metrics import GLOBAL_METRICS
+            meta_v = (
+                task.metadata
+                if isinstance(getattr(task, "metadata", None), dict)
+                else {}
+            )
+            lvl = int(
+                meta_v.get("verify_ladder")
+                or meta_v.get("verify_max_level")
+                or 0
+            )
+            GLOBAL_METRICS.record_verify_ladder(
+                success=False,
+                level=lvl,
+            )
+        except Exception:
+            pass
+        try:
+            from intelligence.pev_loop import verify_retry_message
+            message = verify_retry_message(
+                message,
+                verify_error or "",
+                int(task.attempts or 1),
+            )
+            attempt_messages = {}
+        except Exception:
+            pass
+        return message, attempt_messages
 
-        return message, attempt_messages, commit_sha
+    def _diff_budget_gate(self, *, result, task, ctx, worker, plan) -> bool:
+        """Fail-closed diff budget check for staged paths. Mutates result."""
+        try:
+            from core.task_safety import check_diff_budget
+
+            budget = check_diff_budget(
+                root=str(ctx.root),
+                stage_paths=list(plan.stage or []),
+                task=task,
+            )
+            if not budget.get("ok", True):
+                result.ok = False
+                result.stderr = str(
+                    budget.get("reason")
+                    or "diff budget exceeded"
+                )
+                try:
+                    self._emit(
+                        "DIFF_BUDGET",
+                        result.stderr[:300],
+                        task_id=task.id,
+                        worker=worker.name,
+                        payload=budget,
+                    )
+                except Exception:
+                    pass
+                try:
+                    from utils.metrics import GLOBAL_METRICS
+                    GLOBAL_METRICS.record("diff_budget_exceeded")
+                except Exception:
+                    pass
+                return False
+
+        except Exception as exc:
+            # Diff-budget is a safety gate. If it cannot be evaluated,
+            # never continue as if verification succeeded.
+            result.ok = False
+            result.stderr = (
+                f"diff_budget_check_exception: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            try:
+                self.log.write(result.stderr)
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _commit_verified_plan(self, *, result, task, worker, gitops, plan) -> str:
+        """Commit только staged-путей задачи (TD-001: gitops.commit).
+
+        Возвращает новый HEAD или "" при сбое; result помечается not-ok,
+        чтобы провал коммита никогда не превращался в DONE.
+        """
+        try:
+            commit_sha = gitops.commit(
+                build_commit_message(
+                    str(getattr(task, "id", "") or ""),
+                    str(getattr(worker, "name", "") or ""),
+                    list(plan.stage or []),
+                ),
+                list(plan.stage or []),
+            ) or ""
+        except Exception as exc:
+            result.ok = False
+            result.stderr = (
+                f"git_commit_failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            try:
+                self.log.write(result.stderr)
+            except Exception:
+                pass
+            return ""
+
+        if not commit_sha:
+            result.ok = False
+            result.stderr = "git_commit_failed: empty commit SHA"
+            try:
+                self.log.write(result.stderr)
+            except Exception:
+                pass
+            return ""
+
+        return commit_sha
+
+    def _record_verify_success(self, task) -> None:
+        """Reset consecutive verify fails and record ladder success."""
+        try:
+            self._reset_verify_fails(task)
+        except Exception as exp:
+            try:
+                self.log.write(
+                    f"_reset_verify_fails: {type(exp).__name__}: {exp}"
+                )
+            except Exception:
+                pass
+        try:
+            from utils.metrics import GLOBAL_METRICS
+            meta_v = (
+                task.metadata
+                if isinstance(getattr(task, "metadata", None), dict)
+                else {}
+            )
+            lvl = int(
+                meta_v.get("verify_ladder")
+                or meta_v.get("verify_max_level")
+                or 0
+            )
+            GLOBAL_METRICS.record_verify_ladder(
+                success=True,
+                level=lvl,
+            )
+        except Exception:
+            pass
 
     def _quarantine_exhausted_task(
         self,

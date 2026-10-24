@@ -26,14 +26,14 @@ class _Ctx:
 
 class _Plan:
     commitable = True
-    stage = []
+    stage = ["src/example.py"]
 
     def describe(self):
         return "test-plan"
 
 
-class _GitOpsRaises:
-    def commit_plan(self, *_args, **_kwargs):
+class _GitOpsCommitRaises:
+    def commit(self, *_args, **_kwargs):
         raise RuntimeError("commit exploded")
 
 
@@ -58,6 +58,9 @@ class _Mixin(RPVerifyMixin):
     def _bump_verify_fails(self, *_args):
         return None
 
+    def _diff_budget_gate(self, *_args, **_kwargs):
+        return True
+
 
 def test_git_commit_failure_is_not_done():
     result = SimpleNamespace(ok=True, stderr="")
@@ -68,7 +71,7 @@ def test_git_commit_failure_is_not_done():
         ctx=_Ctx(),
         tests=None,
         worker=_Worker(),
-        gitops=_GitOpsRaises(),
+        gitops=_GitOpsCommitRaises(),
         before_snapshot=None,
         plan=_Plan(),
         message="work",
@@ -126,3 +129,30 @@ def test_verifier_exception_is_fail_closed():
 
     assert result.ok is False
     assert "verification_exception" in result.stderr
+
+
+class _GitOpsOk:
+    def commit(self, *_args, **_kwargs):
+        return "abc123"
+
+
+def test_empty_stage_requires_no_commit():
+    """TD-001: пустой stage — коммит не нужен, задача не должна падать."""
+    result = SimpleNamespace(ok=True, stderr="")
+    plan = _Plan()
+    plan.stage = []
+
+    _Mixin()._phase_verify_and_commit(
+        result=result,
+        task=_Task(),
+        ctx=_Ctx(),
+        tests=None,
+        worker=_Worker(),
+        gitops=_GitOpsOk(),
+        before_snapshot=None,
+        plan=plan,
+        message="work",
+        attempt_messages={},
+    )
+
+    assert result.ok is True
