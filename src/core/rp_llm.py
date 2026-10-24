@@ -752,217 +752,12 @@ class RPLlmMixin:
                              "verification": {"ok": False, "detail": verify_detail}},
                             error=reason,
                         )
-                    try:
-                        self.queue.finish(task.id, self.worker_id, "DONE",
-                                          result.stdout or commit_sha or "", "")
-                    except Exception as exc:
-                        self.log.write(f"finish: {exc}")
-                    self.bus.move(task.channel, "processing", "done", f"{task.id}.json")
-                    before_sha = before_snapshot.head if before_snapshot else ""
-                    run = GitRun(task_id=task.id, before_sha=before_sha,
-                                 after_sha=commit_sha or before_sha,
-                                 committed=bool(commit_sha), commit_sha=commit_sha,
-                                 tests_passed=bool(verify_ok), executor=worker.name,
-                                 duration=result.latency)
-                    self._save(task, "done", {"worker": worker.name, "git": run.to_dict(),
-                                              "stdout": (result.stdout or "")[-4000:],
-                                              "verified": bool(verify_ok),
-                                              "changed_files": changed,
-                                              "verification": {"ok": bool(verify_ok),
-                                                               "detail": verify_detail}})
-                    self.report.record("DONE", worker.name, task.attempts)
-                    try:
-                        self._explain_and_learn("worker", task, worker=worker.name, success=True,
-                            complexity=int(getattr(task, "complexity", 3) or 3))
-                        try:
-                            from utils.cost_tracker import GLOBAL_COST
-                            from utils.pipeline_events import task_done as _pev_done, diff_policy as _pev_diff
-                            toks = int(getattr(result, "tokens", 0) or 0)
-                            if not toks:
-                                toks = max(100, len(str(getattr(task, "message", "") or "")) // 3)
-                            GLOBAL_COST.record(
-                                str(task.id),
-                                worker=str(worker.name or ""),
-                                provider=str(getattr(worker, "provider", "") or ""),
-                                model=str(getattr(worker, "model", "") or ""),
-                                tokens_total=toks,
-                            )
-                            _pev_done(
-                                str(task.id),
-                                str(worker.name or ""),
-                                duration=float(getattr(result, "latency", 0) or 0),
-                                commit=commit_sha or "",
-                            )
-                        except Exception:
-                            pass
-                        try:
-                            if not is_enabled("diff_preview"):
-                                raise ImportError("diff_preview disabled")
-                            from safety.diff_engine import queue_from_task_result, queue_pending
-                            from safety.diff_policy import assess_risk
-                            try:
-                                _diff_lines = 0
-                                for _fp in (files_payload or {}).values():
-                                    if isinstance(_fp, dict):
-                                        _diff_lines += str(_fp.get("new") or "").count("\n")
-                                    else:
-                                        _diff_lines += str(_fp or "").count("\n")
-                            except Exception:
-                                _diff_lines = 0
-                            _decision = assess_risk(
-                                files=list(getattr(task, "files", None) or []),
-                                complexity=int(getattr(task, "complexity", 3) or 3),
-                                diff_lines=_diff_lines,
-                                message=str(getattr(task, "message", "") or ""),
-                            )
-                            try:
-                                meta_d = dict(getattr(task, "metadata", None) or {})
-                                meta_d["diff_policy"] = _decision.to_dict()
-                                task.metadata = meta_d
-                                try:
-                                    from utils.pipeline_events import diff_policy as _pev_diff
-                                    _pev_diff(str(task.id), _decision.to_dict())
-                                except Exception:
-                                    pass
-                            except Exception:
-                                pass
-                            if _decision.action == "require_approval":
-                                # still queue for UI — never silent auto-apply on HIGH
-                                pass
-                            payload = getattr(task, "raw", None) or {}
-                            if not isinstance(payload, dict):
-                                payload = {}
-                            proot = getattr(proj, "root", None) if proj else None
-                            queued = queue_from_task_result(payload, project_root=proot)
-                            if not queued and gitops and before_snapshot is not None:
-                                try:
-                                    changed = []
-                                    if hasattr(gitops, "changed_files_since"):
-                                        changed = gitops.changed_files_since(before_snapshot) or []
-                                    if not changed and hasattr(gitops, "diff_names"):
-                                        changed = gitops.diff_names() or []
-                                    # Restrict to task.files if non-empty to reduce parallel bleed
-                                    tf = [str(f).replace("\\", "/") for f in (task.files or [])]
-                                    if tf:
-                                        changed = [c for c in changed if str(c).replace("\\", "/") in tf
-                                                   or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
-                                    files_payload = {}
-                                    head_sha = ""
-                                    try:
-                                        head_sha = getattr(before_snapshot, "head", "") or ""
-                                    except Exception:
-                                        head_sha = ""
-                                    for rel in list(changed or [])[:30]:
-                                        rel_s = str(rel).replace("\\", "/")
-                                        # new content from working tree
-                                        if hasattr(gitops, "read_working"):
-                                            new_c = gitops.read_working(rel_s)
-                                        else:
-                                            p = Path(proot or ".") / rel_s
-                                            new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
-                                        # original from baseline HEAD (empty if new file)
-                                        if hasattr(gitops, "show_at_head"):
-                                            orig = gitops.show_at_head(rel_s, head_sha or None)
-                                        else:
-                                            orig = ""
-                                        files_payload[rel_s] = {"original": orig, "new": new_c}
-                                    if files_payload:
-                                        queue_pending(str(task.id), files_payload, project_root=proot or Path("."))
-                                        meta2 = dict(payload.get("metadata") or {})
-                                        meta2["file_changes"] = [
-                                            {"file": k, "original": v.get("original", ""), "new": v.get("new", "")}
-                                            for k, v in files_payload.items()
-                                        ]
-                                        payload["metadata"] = meta2
-                                        try:
-                                            task.raw = payload
-                                        except Exception:
-                                            pass
-                                except Exception as _diff_exc:
-                                    try:
-                                        self.log.write(f"diff capture: {_diff_exc}")
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    self.report.record_provider(worker.provider, "DONE")
-                    self.report.commits += int(bool(commit_sha))
-                    try:
-                        from utils.budget import GLOBAL_BUDGET, GLOBAL_TRACKER
-                        from utils.metrics import GLOBAL_METRICS
-                        GLOBAL_BUDGET.record(worker.name, tokens=0)
-                        GLOBAL_TRACKER.record_request(
-                            worker.name, tokens=0,
-                            provider=worker.provider, latency=result.latency)
-                        GLOBAL_METRICS.record_task(
-                            task, worker.name, True, result.latency, status="DONE")
-                    except Exception:
-                        pass
-                    try:
-                        self.log.log_task_done(
-                            task.id, worker.name, result.latency, 0,
-                            channel=task.channel)
-                    except Exception:
-                        pass
-                    self.log.task(task.channel, task.id, worker.name, "ГОТОВО")
-                    self._emit("DONE", "успех", task_id=task.id, worker=worker.name,
-                               executor=worker.harness, provider=worker.provider,
-                               model=worker.model, duration=result.latency,
-                               payload={"commit": commit_sha, "attempts": task.attempts})
-                    try:
-                        from utils.task_trace import GLOBAL_TRACES
-                        GLOBAL_TRACES.complete(str(task.id), "DONE")
-                    except Exception:
-                        pass
-                    self._cache_put(
-                        task, proj,
-                        method="llm",
-                        worker=worker.name,
-                        stdout=(result.stdout or "")[-4000:],
-                        commit=commit_sha or "",
-                        snapshot=True,
+                    return self._llm_success_finalize(
+                        task=task, proj=proj, ctx=ctx, worker=worker, result=result,
+                        gitops=gitops, before_snapshot=before_snapshot,
+                        commit_sha=commit_sha, verify_ok=verify_ok,
+                        verify_detail=verify_detail, changed=changed,
                     )
-                    self._record_semantic(
-                        task, success=True, worker=worker.name,
-                        solution=(result.stdout or "")[-800:],
-                    )
-                    self._maybe_update_project_memory(task, success=True)
-                    try:
-                        self._maybe_run_file_sentinel(task, proj)
-                    except Exception:
-                        pass
-                    try:
-                        from intelligence.pev_loop import write_progress
-                        n = 0
-                        try:
-                            import json as _json
-                            from pathlib import Path as _P
-                            pj = _P(str(ctx.root)) / ".agentbus" / "current_plan.json"
-                            if pj.is_file():
-                                n = len((_json.loads(pj.read_text(encoding="utf-8")).get("steps") or []))
-                        except Exception:
-                            n = 0
-                        write_progress(
-                            ctx.root,
-                            status="done",
-                            done_steps=list(range(1, n + 1)),
-                            task_id=str(task.id),
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        self._cleanup_task_git_branch(gitops, task)
-                        try:
-                            proot = str(getattr(ctx, "root", None) or getattr(task, "project", "") or "")
-                            if proot:
-                                self._maybe_cleanup_git_worktree(task, proot)
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    return "DONE"
             except Exception as exc:
                 result = ExecutionResult(
                     False, stderr=f"Внутренняя ошибка: {type(exc).__name__}: {exc}")
@@ -990,6 +785,239 @@ class RPLlmMixin:
             self._record_lesson(task, error, worker=worker.name, category=dec.category)
             self._record_semantic(task, success=False, worker=worker.name, solution=error[-400:])
 
+        return self._llm_workers_exhausted(
+            task=task, gitops=gitops, before_snapshot=before_snapshot,
+            result=result, attempted=attempted,
+        )
+
+    def _llm_success_finalize(
+        self, task, proj, ctx, worker, result, gitops, before_snapshot,
+        commit_sha: str, verify_ok: bool, verify_detail: str, changed: list,
+    ) -> str:
+        """Success-путь _stage_llm_pipeline (TD-012): тело перенесено дословно.
+
+        Финализация DONE: queue.finish, bus.move, _save, отчёты/метрики/кэш,
+        semantic-память, write_progress, git-cleanup. Возвращает "DONE".
+        """
+        try:
+            self.queue.finish(task.id, self.worker_id, "DONE",
+                              result.stdout or commit_sha or "", "")
+        except Exception as exc:
+            self.log.write(f"finish: {exc}")
+        self.bus.move(task.channel, "processing", "done", f"{task.id}.json")
+        before_sha = before_snapshot.head if before_snapshot else ""
+        run = GitRun(task_id=task.id, before_sha=before_sha,
+                     after_sha=commit_sha or before_sha,
+                     committed=bool(commit_sha), commit_sha=commit_sha,
+                     tests_passed=bool(verify_ok), executor=worker.name,
+                     duration=result.latency)
+        self._save(task, "done", {"worker": worker.name, "git": run.to_dict(),
+                                  "stdout": (result.stdout or "")[-4000:],
+                                  "verified": bool(verify_ok),
+                                  "changed_files": changed,
+                                  "verification": {"ok": bool(verify_ok),
+                                                   "detail": verify_detail}})
+        self.report.record("DONE", worker.name, task.attempts)
+        try:
+            self._explain_and_learn("worker", task, worker=worker.name, success=True,
+                complexity=int(getattr(task, "complexity", 3) or 3))
+            try:
+                from utils.cost_tracker import GLOBAL_COST
+                from utils.pipeline_events import task_done as _pev_done, diff_policy as _pev_diff
+                toks = int(getattr(result, "tokens", 0) or 0)
+                if not toks:
+                    toks = max(100, len(str(getattr(task, "message", "") or "")) // 3)
+                GLOBAL_COST.record(
+                    str(task.id),
+                    worker=str(worker.name or ""),
+                    provider=str(getattr(worker, "provider", "") or ""),
+                    model=str(getattr(worker, "model", "") or ""),
+                    tokens_total=toks,
+                )
+                _pev_done(
+                    str(task.id),
+                    str(worker.name or ""),
+                    duration=float(getattr(result, "latency", 0) or 0),
+                    commit=commit_sha or "",
+                )
+            except Exception:
+                pass
+            try:
+                if not is_enabled("diff_preview"):
+                    raise ImportError("diff_preview disabled")
+                from safety.diff_engine import queue_from_task_result, queue_pending
+                from safety.diff_policy import assess_risk
+                try:
+                    _diff_lines = 0
+                    for _fp in (files_payload or {}).values():
+                        if isinstance(_fp, dict):
+                            _diff_lines += str(_fp.get("new") or "").count("\n")
+                        else:
+                            _diff_lines += str(_fp or "").count("\n")
+                except Exception:
+                    _diff_lines = 0
+                _decision = assess_risk(
+                    files=list(getattr(task, "files", None) or []),
+                    complexity=int(getattr(task, "complexity", 3) or 3),
+                    diff_lines=_diff_lines,
+                    message=str(getattr(task, "message", "") or ""),
+                )
+                try:
+                    meta_d = dict(getattr(task, "metadata", None) or {})
+                    meta_d["diff_policy"] = _decision.to_dict()
+                    task.metadata = meta_d
+                    try:
+                        from utils.pipeline_events import diff_policy as _pev_diff
+                        _pev_diff(str(task.id), _decision.to_dict())
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                if _decision.action == "require_approval":
+                    # still queue for UI — never silent auto-apply on HIGH
+                    pass
+                payload = getattr(task, "raw", None) or {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                proot = getattr(proj, "root", None) if proj else None
+                queued = queue_from_task_result(payload, project_root=proot)
+                if not queued and gitops and before_snapshot is not None:
+                    try:
+                        changed = []
+                        if hasattr(gitops, "changed_files_since"):
+                            changed = gitops.changed_files_since(before_snapshot) or []
+                        if not changed and hasattr(gitops, "diff_names"):
+                            changed = gitops.diff_names() or []
+                        # Restrict to task.files if non-empty to reduce parallel bleed
+                        tf = [str(f).replace("\\", "/") for f in (task.files or [])]
+                        if tf:
+                            changed = [c for c in changed if str(c).replace("\\", "/") in tf
+                                       or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
+                        files_payload = {}
+                        head_sha = ""
+                        try:
+                            head_sha = getattr(before_snapshot, "head", "") or ""
+                        except Exception:
+                            head_sha = ""
+                        for rel in list(changed or [])[:30]:
+                            rel_s = str(rel).replace("\\", "/")
+                            # new content from working tree
+                            if hasattr(gitops, "read_working"):
+                                new_c = gitops.read_working(rel_s)
+                            else:
+                                p = Path(proot or ".") / rel_s
+                                new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+                            # original from baseline HEAD (empty if new file)
+                            if hasattr(gitops, "show_at_head"):
+                                orig = gitops.show_at_head(rel_s, head_sha or None)
+                            else:
+                                orig = ""
+                            files_payload[rel_s] = {"original": orig, "new": new_c}
+                        if files_payload:
+                            queue_pending(str(task.id), files_payload, project_root=proot or Path("."))
+                            meta2 = dict(payload.get("metadata") or {})
+                            meta2["file_changes"] = [
+                                {"file": k, "original": v.get("original", ""), "new": v.get("new", "")}
+                                for k, v in files_payload.items()
+                            ]
+                            payload["metadata"] = meta2
+                            try:
+                                task.raw = payload
+                            except Exception:
+                                pass
+                    except Exception as _diff_exc:
+                        try:
+                            self.log.write(f"diff capture: {_diff_exc}")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+        self.report.record_provider(worker.provider, "DONE")
+        self.report.commits += int(bool(commit_sha))
+        try:
+            from utils.budget import GLOBAL_BUDGET, GLOBAL_TRACKER
+            from utils.metrics import GLOBAL_METRICS
+            GLOBAL_BUDGET.record(worker.name, tokens=0)
+            GLOBAL_TRACKER.record_request(
+                worker.name, tokens=0,
+                provider=worker.provider, latency=result.latency)
+            GLOBAL_METRICS.record_task(
+                task, worker.name, True, result.latency, status="DONE")
+        except Exception:
+            pass
+        try:
+            self.log.log_task_done(
+                task.id, worker.name, result.latency, 0,
+                channel=task.channel)
+        except Exception:
+            pass
+        self.log.task(task.channel, task.id, worker.name, "ГОТОВО")
+        self._emit("DONE", "успех", task_id=task.id, worker=worker.name,
+                   executor=worker.harness, provider=worker.provider,
+                   model=worker.model, duration=result.latency,
+                   payload={"commit": commit_sha, "attempts": task.attempts})
+        try:
+            from utils.task_trace import GLOBAL_TRACES
+            GLOBAL_TRACES.complete(str(task.id), "DONE")
+        except Exception:
+            pass
+        self._cache_put(
+            task, proj,
+            method="llm",
+            worker=worker.name,
+            stdout=(result.stdout or "")[-4000:],
+            commit=commit_sha or "",
+            snapshot=True,
+        )
+        self._record_semantic(
+            task, success=True, worker=worker.name,
+            solution=(result.stdout or "")[-800:],
+        )
+        self._maybe_update_project_memory(task, success=True)
+        try:
+            self._maybe_run_file_sentinel(task, proj)
+        except Exception:
+            pass
+        try:
+            from intelligence.pev_loop import write_progress
+            n = 0
+            try:
+                import json as _json
+                from pathlib import Path as _P
+                pj = _P(str(ctx.root)) / ".agentbus" / "current_plan.json"
+                if pj.is_file():
+                    n = len((_json.loads(pj.read_text(encoding="utf-8")).get("steps") or []))
+            except Exception:
+                n = 0
+            write_progress(
+                ctx.root,
+                status="done",
+                done_steps=list(range(1, n + 1)),
+                task_id=str(task.id),
+            )
+        except Exception:
+            pass
+        try:
+            self._cleanup_task_git_branch(gitops, task)
+            try:
+                proot = str(getattr(ctx, "root", None) or getattr(task, "project", "") or "")
+                if proot:
+                    self._maybe_cleanup_git_worktree(task, proot)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return "DONE"
+
+    def _llm_workers_exhausted(self, task, gitops, before_snapshot,
+                               result, attempted: bool) -> str:
+        """Хвост _stage_llm_pipeline (TD-012): тело перенесено дословно.
+
+        Все исполнители исчерпаны: retry/verify-бюджет, карантин, paid-gate,
+        DEFERRED через finish_task. Возвращает финальный статус задачи.
+        """
         error = ("Все исполнители не справились" if attempted else "Нет доступного исполнителя")
         worker_err = (result and (result.stderr or result.stdout)) or ""
         if not worker_err:
