@@ -255,8 +255,8 @@ class TaskResult:
         return "\n".join(lines)
 
 
-def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
-    """Build TaskResult from bus JSON / history row (best-effort, never raises)."""
+def _tr_prepare(task_row: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any], Any, dict[str, Any]]:
+    """Normalize raw bus/history row into (row, result, _raw_result, meta)."""
     row = dict(task_row or {})
     _raw_result = row.get("result")
     if isinstance(_raw_result, dict):
@@ -275,6 +275,9 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
     if not meta and isinstance(result.get("metadata"), dict):
         meta = result["metadata"]
 
+
+def _tr_normalize_worker_result(result: dict[str, Any], _raw_result: Any) -> dict[str, Any]:
+    """FC-14: normalize worker-shaped result through WorkerResult."""
     # FC-14: normalize worker-shaped result through WorkerResult
     try:
         if result and (
@@ -311,7 +314,9 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
     except Exception:
         pass
 
-    tid = str(row.get("id") or result.get("task_id") or "")
+
+def _tr_status(row: dict[str, Any], result: dict[str, Any]) -> tuple[bool, str]:
+    """Derive (ok, status); timeout or explicit ok=False wins over stale DONE."""
     status = str(
         row.get("status")
         or row.get("_state")
@@ -357,11 +362,9 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
         if status in ("DONE", "SUCCESS"):
             status = "ERROR"
 
-    worker = str(result.get("worker") or meta.get("worker") or "")
-    skill = str(result.get("skill") or meta.get("skill") or "")
-    if not skill and isinstance(result.get("skill_result"), dict):
-        skill = str(result["skill_result"].get("name") or "")
 
+def _tr_verification(result: dict[str, Any], meta: dict[str, Any], ok: bool, status: str) -> tuple[dict[str, Any], bool, str]:
+    """FC-11/FC-02: structured verification report; FAIL cannot be presented as DONE."""
     # verification (FC-11: prefer structured engine report from metadata)
     ver = (
         result.get("verification")
@@ -410,6 +413,9 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
         except Exception:
             pass
 
+
+def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
+    """FC-04: collect files / insertions / deletions into a ChangeSet."""
     # changes (FC-04: git / file_changes / worker fields)
     files: list[str] = []
     for key in ("files_changed", "files", "changed_files"):
@@ -467,21 +473,9 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
         )[:2000],
     )
 
-    summary = ""
-    if isinstance(ver, dict) and ver.get("summary"):
-        summary = str(ver.get("summary"))[:500]
-    if not summary:
-        for key in ("summary", "message", "stdout"):
-            if result.get(key):
-                summary = str(result[key])[:500]
-                break
-    if not summary and skill:
-        summary = f"skill:{skill}"
-    err = str(result.get("error") or result.get("stderr") or row.get("error") or "")[:2000]
 
-    duration = float(result.get("latency") or result.get("duration") or meta.get("duration") or 0)
-    attempts = int(row.get("attempts") or meta.get("attempts") or result.get("attempts") or 1)
-
+def _tr_timeline(meta: dict[str, Any], result: dict[str, Any], tid: str) -> list[str]:
+    """Best-effort timeline from trace metadata (never raises)."""
     timeline: list[str] = []
     tr = meta.get("trace") or result.get("trace") or meta.get("task_trace") or result.get("task_trace")
     try:
@@ -499,6 +493,39 @@ def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
             timeline = [str(x) for x in tr][:40]
         elif isinstance(tr, dict) and isinstance(tr.get("events"), list):
             timeline = [str(x) for x in tr["events"]][:40]
+
+
+def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
+    """Build TaskResult from bus JSON / history row (best-effort, never raises)."""
+    row, result, _raw_result, meta = _tr_prepare(task_row)
+    result = _tr_normalize_worker_result(result, _raw_result)
+    tid = str(row.get("id") or result.get("task_id") or "")
+    ok, status = _tr_status(row, result)
+
+    worker = str(result.get("worker") or meta.get("worker") or "")
+    skill = str(result.get("skill") or meta.get("skill") or "")
+    if not skill and isinstance(result.get("skill_result"), dict):
+        skill = str(result["skill_result"].get("name") or "")
+
+    ver, ok, status = _tr_verification(result, meta, ok, status)
+    changes = _tr_changes(result, meta)
+
+    summary = ""
+    if isinstance(ver, dict) and ver.get("summary"):
+        summary = str(ver.get("summary"))[:500]
+    if not summary:
+        for key in ("summary", "message", "stdout"):
+            if result.get(key):
+                summary = str(result[key])[:500]
+                break
+    if not summary and skill:
+        summary = f"skill:{skill}"
+    err = str(result.get("error") or result.get("stderr") or row.get("error") or "")[:2000]
+
+    duration = float(result.get("latency") or result.get("duration") or meta.get("duration") or 0)
+    attempts = int(row.get("attempts") or meta.get("attempts") or result.get("attempts") or 1)
+
+    timeline = _tr_timeline(meta, result, tid)
 
     # embedded task_result wins
     embedded = result.get("task_result") or row.get("task_result")
