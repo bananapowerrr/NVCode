@@ -84,23 +84,8 @@ def _safe(fn, default=None):
         return default
 
 
-def build_project_snapshot(
-    project_root: str | Path,
-    *,
-    include_capabilities: bool = False,
-    plan: Any = None,
-    decisions: Any = None,
-    state: Any = None,
-) -> ProjectSnapshot:
-    """Aggregate plan / decisions / advisor / architecture into one snapshot."""
-    root = Path(project_root).resolve()
-    snap = ProjectSnapshot(
-        project_root=str(root),
-        project_name=root.name,
-    )
-    errors: list[str] = []
-
-    # --- ProjectState ---
+def _snap_state(snap: ProjectSnapshot, root: Path, state: Any, errors: list[str]) -> None:
+    """TD-019: секция ProjectState — код перенесён из build_project_snapshot без изменений."""
     try:
         from intelligence.project_state import load_project_state
         st = state if state is not None else load_project_state(root)
@@ -125,7 +110,14 @@ def build_project_snapshot(
     except Exception as exp:
         errors.append(f"state: {exp}")
 
-    # --- Decisions / architecture blockers ---
+
+
+def _snap_decisions(snap: ProjectSnapshot, root: Path, decisions: Any, errors: list[str]) -> tuple[int, bool, Any]:
+    """TD-019: решения и архитектурные стопоры.
+
+    Возвращает (open_decisions, arch_block, decisions): очередь решений
+    создаётся здесь, если не была передана, и нужна секции Supervisor.
+    """
     open_decisions = 0
     arch_block = False
     try:
@@ -168,10 +160,15 @@ def build_project_snapshot(
                 meta={"ids": [i.id for i in arch_items]},
             ))
         snap.counts["open_decisions"] = open_decisions
+        return open_decisions, arch_block, decisions
     except Exception as exp:
         errors.append(f"decisions: {exp}")
+        return open_decisions, arch_block, decisions
 
-    # --- Living plan ---
+
+
+def _snap_plan(snap: ProjectSnapshot, root: Path, plan: Any, errors: list[str]) -> None:
+    """TD-019: секция LivingPlan."""
     try:
         from intelligence.living_plan import LivingPlan, is_active
         if plan is None:
@@ -211,7 +208,10 @@ def build_project_snapshot(
     except Exception as exp:
         errors.append(f"plan: {exp}")
 
-    # --- Advisor (cheap, no heavy scan by default) ---
+
+
+def _snap_advisor(snap: ProjectSnapshot, root: Path, errors: list[str]) -> None:
+    """TD-019: секция советника (быстрый скан без тяжёлых проверок)."""
     try:
         from intelligence.development_advisor import advise
         from intelligence.project_analysis import quick_scan
@@ -237,7 +237,10 @@ def build_project_snapshot(
     except Exception as exp:
         errors.append(f"advisor: {exp}")
 
-    # --- Supervisor wait (human label) ---
+
+
+def _snap_supervisor(snap: ProjectSnapshot, root: Path, decisions: Any, errors: list[str]) -> None:
+    """TD-019: секция Supervisor (smart_waiting) с человеческими подписями."""
     try:
         from intelligence.smart_waiting import evaluate_wait
         from intelligence.decision_queue import DecisionQueue
@@ -266,7 +269,10 @@ def build_project_snapshot(
     except Exception as exp:
         errors.append(f"supervisor: {exp}")
 
-    # --- Capabilities optional ---
+
+
+def _snap_capabilities(snap: ProjectSnapshot, errors: list[str], include_capabilities: bool) -> None:
+    """TD-019: опциональная секция окружения (configuration_advisor)."""
     if include_capabilities:
         try:
             from core.configuration_advisor import advise_configuration
@@ -281,7 +287,10 @@ def build_project_snapshot(
         except Exception as exp:
             errors.append(f"capabilities: {exp}")
 
-    # --- Overall status ---
+
+
+def _overall_status(snap: ProjectSnapshot, open_decisions: int, arch_block: bool) -> None:
+    """TD-019: итоговый статус и next_action по собранным секциям."""
     if arch_block or open_decisions:
         snap.status = "needs_decision"
         snap.status_label = "Нужно ваше решение"
@@ -302,6 +311,45 @@ def build_project_snapshot(
         snap.status = "empty"
         snap.status_label = "Начните с аудита или плана"
         snap.next_action = "Открыть аудит проекта"
+
+
+
+def build_project_snapshot(
+    project_root: str | Path,
+    *,
+    include_capabilities: bool = False,
+    plan: Any = None,
+    decisions: Any = None,
+    state: Any = None,
+) -> ProjectSnapshot:
+    """Aggregate plan / decisions / advisor / architecture into one snapshot."""
+    root = Path(project_root).resolve()
+    snap = ProjectSnapshot(
+        project_root=str(root),
+        project_name=root.name,
+    )
+    errors: list[str] = []
+
+    # --- ProjectState ---
+    _snap_state(snap, root, state, errors)
+
+    # --- Decisions / architecture blockers ---
+    open_decisions, arch_block, decisions = _snap_decisions(snap, root, decisions, errors)
+
+    # --- Living plan ---
+    _snap_plan(snap, root, plan, errors)
+
+    # --- Advisor (cheap, no heavy scan by default) ---
+    _snap_advisor(snap, root, errors)
+
+    # --- Supervisor wait (human label) ---
+    _snap_supervisor(snap, root, decisions, errors)
+
+    # --- Capabilities optional ---
+    _snap_capabilities(snap, errors, include_capabilities)
+
+    # --- Overall status ---
+    _overall_status(snap, open_decisions, arch_block)
 
     snap.errors = errors
     snap.built_at = time.time()
