@@ -287,7 +287,55 @@ class Runtime(RuntimeOps, RuntimeProcess):
     def process(self, raw: dict) -> str | None:
         """Обработать задачу. Возвращает DONE/ERROR/DEFERRED/DEDUPED или None."""
         raw = dict(raw or {})
-        # Desktop chat primary: seed processing so bus.move(done) works
+        self._process_desktop_seed(raw)
+
+        # --- night filter (optional): defer hard / autopilot work until night ---
+        if self._maybe_defer_for_night(raw):
+            return "DEFERRED"
+
+        # --- dedupe (skip on retries) ---
+        fp, deduped = self._process_dedupe(raw)
+        if deduped:
+            return deduped
+
+        # --- project lock + project_root for complexity ---
+        project_key = self._process_project_key(raw)
+        tid = str(raw.get("id") or "")
+        meta_lock = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        is_sub = bool(meta_lock.get("is_subtask") or meta_lock.get("source") in ("sub_agent", "decomposer") or str(meta_lock.get("parent_id") or ""))
+        parent_id = str(meta_lock.get("parent_id") or "")
+        if not self.project_lock.acquire(project_key, tid, is_subtask=is_sub, parent_id=parent_id):
+            return self._process_defer_busy(
+                raw,
+                event="PROJECT_BUSY",
+                message=f"проект занят, отложено · {project_key}",
+                payload={"project": project_key, "active": self.project_lock.snapshot()},
+                error="PROJECT_BUSY",
+                delay=15,
+                fp=fp,
+            )
+
+        # Subtask file isolation: do not run two children touching the same paths
+        files_lock = list(raw.get("files") or [])
+        if is_sub and files_lock:
+            if not self.file_locks.acquire(files_lock, tid):
+                self.project_lock.release(project_key, tid)
+                return self._process_defer_busy(
+                    raw,
+                    event="FILE_BUSY",
+                    message=f"файлы заняты другим subtask · {project_key}",
+                    payload={"files": files_lock[:12], "held": self.file_locks.snapshot()},
+                    error="FILE_BUSY",
+                    delay=10,
+                    fp=fp,
+                )
+
+        return self._process_complete(
+            raw, fp=fp, project_key=project_key, tid=tid,
+            is_sub=is_sub, files_lock=files_lock)
+
+    def _process_desktop_seed(self, raw: dict) -> None:
+        """Desktop chat primary: seed processing so bus.move(done) works."""
         try:
             ch = str(raw.get("channel") or "")
             if ch == "desktop" or (raw.get("metadata") or {}).get("primary_channel") == "desktop":
@@ -302,11 +350,8 @@ class Runtime(RuntimeOps, RuntimeProcess):
             except Exception:
                 pass
 
-        # --- night filter (optional): defer hard / autopilot work until night ---
-        if self._maybe_defer_for_night(raw):
-            return "DEFERRED"
-
-        # --- dedupe (skip on retries) ---
+    def _process_dedupe(self, raw: dict) -> tuple[str | None, str | None]:
+        """Dedupe (skip on retries). Возвращает (fp, "DEDUPED" | None)."""
         try:
             attempts_peek = int(raw.get("attempts") or 0)
         except (TypeError, ValueError):
@@ -324,7 +369,7 @@ class Runtime(RuntimeOps, RuntimeProcess):
                            task_id=tid, worker=self.worker_id,
                            payload={"fingerprint": fp, "reason": "completed"})
                 self._finalize_deduped(raw, reason="completed")
-                return "DEDUPED"
+                return fp, "DEDUPED"
             if fp:
                 with self._dedupe_lock:
                     if fp in self._dedupe_inflight:
@@ -333,10 +378,12 @@ class Runtime(RuntimeOps, RuntimeProcess):
                                    task_id=tid, worker=self.worker_id,
                                    payload={"fingerprint": fp, "reason": "in_flight"})
                         self._finalize_deduped(raw, reason="in_flight")
-                        return "DEDUPED"
+                        return fp, "DEDUPED"
                     self._dedupe_inflight.add(fp)
+        return fp, None
 
-        # --- project lock + project_root for complexity ---
+    def _process_project_key(self, raw: dict) -> str:
+        """Ключ project lock + project_root в metadata (для complexity)."""
         project = str(raw.get("project") or "").strip()
         try:
             if project:
@@ -352,61 +399,32 @@ class Runtime(RuntimeOps, RuntimeProcess):
                 project_key = project or "_default"
         except Exception:
             project_key = project or "_default"
+        return project_key
 
+    def _process_defer_busy(self, raw: dict, *, event: str, message: str, payload: dict, error: str, delay: float, fp: str | None) -> str:
+        """PROJECT_BUSY/FILE_BUSY: эмит, парковка в deferred, снятие inflight."""
         tid = str(raw.get("id") or "")
-        meta_lock = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-        is_sub = bool(meta_lock.get("is_subtask") or meta_lock.get("source") in ("sub_agent", "decomposer") or str(meta_lock.get("parent_id") or ""))
-        parent_id = str(meta_lock.get("parent_id") or "")
-        if not self.project_lock.acquire(project_key, tid, is_subtask=is_sub, parent_id=parent_id):
-            self._emit("PROJECT_BUSY", f"проект занят, отложено · {project_key}",
-                       task_id=tid, worker=self.worker_id,
-                       payload={"project": project_key, "active": self.project_lock.snapshot()})
-            try:
-                task = Task.from_dict(raw)
-                task.id = tid or task.id
-                self._backoff[task.id] = time.monotonic() + 15
-                self.bus.move(task.channel, "processing", "deferred", f"{task.id}.json")
-                self._save(task, "deferred", {
-                    "error": "PROJECT_BUSY",
-                    "attempts": int(raw.get("attempts") or 0),
-                    "category": "BUSY",
-                })
-            except Exception:
-                pass
-            if fp:
-                with self._dedupe_lock:
-                    self._dedupe_inflight.discard(fp)
-            return "DEFERRED"
+        self._emit(event, message, task_id=tid, worker=self.worker_id,
+                   payload=payload)
+        try:
+            task = Task.from_dict(raw)
+            task.id = tid or task.id
+            self._backoff[task.id] = time.monotonic() + delay
+            self.bus.move(task.channel, "processing", "deferred", f"{task.id}.json")
+            self._save(task, "deferred", {
+                "error": error,
+                "attempts": int(raw.get("attempts") or 0),
+                "category": "BUSY",
+            })
+        except Exception:
+            pass
+        if fp:
+            with self._dedupe_lock:
+                self._dedupe_inflight.discard(fp)
+        return "DEFERRED"
 
-        # Subtask file isolation: do not run two children touching the same paths
-        files_lock = list(raw.get("files") or [])
-        if is_sub and files_lock:
-            if not self.file_locks.acquire(files_lock, tid):
-                self.project_lock.release(project_key, tid)
-                self._emit(
-                    "FILE_BUSY",
-                    f"файлы заняты другим subtask · {project_key}",
-                    task_id=tid,
-                    worker=self.worker_id,
-                    payload={"files": files_lock[:12], "held": self.file_locks.snapshot()},
-                )
-                try:
-                    task = Task.from_dict(raw)
-                    task.id = tid or task.id
-                    self._backoff[task.id] = time.monotonic() + 10
-                    self.bus.move(task.channel, "processing", "deferred", f"{task.id}.json")
-                    self._save(task, "deferred", {
-                        "error": "FILE_BUSY",
-                        "attempts": int(raw.get("attempts") or 0),
-                        "category": "BUSY",
-                    })
-                except Exception:
-                    pass
-                if fp:
-                    with self._dedupe_lock:
-                        self._dedupe_inflight.discard(fp)
-                return "DEFERRED"
-
+    def _process_complete(self, raw: dict, *, fp: str | None, project_key: str, tid: str, is_sub: bool, files_lock: list) -> str | None:
+        """Тело задачи + финализация: dedupe mark/forget, plan-notify, локи."""
         try:
             status = self._process_body(raw)
             if status == "DONE" and fp:
