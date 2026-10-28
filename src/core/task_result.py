@@ -697,6 +697,23 @@ def format_task_report(row: dict[str, Any] | None) -> str:
     except Exception:
         tr = None
 
+    task_id, status, request, worker, files, verification, error = _ftr_fields(row, meta, tr)
+    lines = [f"Task #{task_id}  RESULT: {status}"]
+    if request:
+        lines.append(f"REQUEST  : {request}")
+    if worker:
+        lines.append(f"WORKER   : {worker}")
+    lines.append("CHANGES  : " + (", ".join(files) if files else "(none)"))
+    lines.append(_ftr_verify_line(verification))
+    if error:
+        lines.append(f"ERROR    : {error}")
+    return "\n".join(lines)
+
+
+def _ftr_fields(
+    row: dict[str, Any], meta: dict[str, Any], tr: TaskResult | None
+) -> tuple[str, str, str, str, list[str], dict[str, Any], str]:
+    """Report fields from TaskResult when available, else raw row/meta."""
     if tr is not None:
         task_id = tr.task_id or str(row.get("id") or "")
         status = (tr.status or "").upper() or ("DONE" if tr.ok else "ERROR")
@@ -716,28 +733,22 @@ def format_task_report(row: dict[str, Any] | None) -> str:
         vr = meta.get("verification_report")
         verification = dict(vr) if isinstance(vr, dict) else {}
         error = str(row.get("error") or "")
+    return task_id, status, request, worker, files, verification, error
 
-    lines = [f"Task #{task_id}  RESULT: {status}"]
-    if request:
-        lines.append(f"REQUEST  : {request}")
-    if worker:
-        lines.append(f"WORKER   : {worker}")
-    lines.append("CHANGES  : " + (", ".join(files) if files else "(none)"))
-    if verification:
-        parts: list[str] = []
-        for key in ("syntax", "tests"):
-            if key in verification:
-                parts.append(f"{key}={verification[key]}")
-        if verification.get("passed") is not None:
-            parts.append(f"passed={verification['passed']}")
-        if verification.get("summary"):
-            parts.append(f"summary={verification['summary']}")
-        lines.append("VERIFY   : " + " · ".join(parts))
-    else:
-        lines.append("VERIFY   : (no verification report)")
-    if error:
-        lines.append(f"ERROR    : {error}")
-    return "\n".join(lines)
+
+def _ftr_verify_line(verification: dict[str, Any]) -> str:
+    """VERIFY section line: joined parts or an explicit "no report" marker."""
+    if not verification:
+        return "VERIFY   : (no verification report)"
+    parts: list[str] = []
+    for key in ("syntax", "tests"):
+        if key in verification:
+            parts.append(f"{key}={verification[key]}")
+    if verification.get("passed") is not None:
+        parts.append(f"passed={verification['passed']}")
+    if verification.get("summary"):
+        parts.append(f"summary={verification['summary']}")
+    return "VERIFY   : " + " · ".join(parts)
 
 
 def history_detail_text(row: dict[str, Any] | None) -> str:
