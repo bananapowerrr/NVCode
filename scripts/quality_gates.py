@@ -87,11 +87,12 @@ def complexity(fn: ast.AST) -> int:
 
 
 def scan(node: ast.AST, prefix: str, path: str, out: list[Fn]) -> None:
+    """Collect functions; class methods get Class.method names."""
     for child in ast.iter_child_nodes(node):
         if isinstance(child, _FUNC_TYPES):
-            end = child.end_lineno or child.lineno
+            end = getattr(child, "end_lineno", None) or child.lineno
             out.append(Fn(path, prefix + child.name, complexity(child), child.lineno, end))
-            scan(child, prefix + child.name + ".", path, out)
+            scan(child, "", path, out)  # nested defs get flat names
         elif isinstance(child, ast.ClassDef):
             scan(child, prefix + child.name + ".", path, out)
         else:
