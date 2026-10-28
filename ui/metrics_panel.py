@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
 """Панель метрик: metrics_latest.json + очередь channels."""
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-import customtkinter as ctk
+try:
+    import customtkinter as ctk
+except ImportError:  # pragma: no cover — offline/CI without GUI deps
+    ctk = None  # type: ignore
 
 from ui.paths import agentbus_root, ensure_sys_path
 from ui.i18n_ui import t as _t
@@ -111,6 +114,7 @@ def _bar(label: str, value: float, width: int = 20) -> str:
     v = max(0.0, min(1.0, float(value or 0)))
     filled = int(round(v * width))
     return f"{label:12} [{'█' * filled}{'░' * (width - filled)}] {v*100:5.1f}%"
+
 
 def format_cost_section() -> str:
     """P1.5 — session cost board (local = 0 ₽ explicit)."""
@@ -264,8 +268,14 @@ def format_metrics_board(m: dict[str, Any] | None, q: dict[str, Any] | None) -> 
     return "\n".join(lines)
 
 
-class MetricsPanel(ctk.CTkFrame):
+def _require_ctk():
+    if ctk is None:
+        raise ImportError("customtkinter is required for MetricsPanel GUI")
+
+
+class MetricsPanel((ctk.CTkFrame if ctk is not None else object)):  # type: ignore[misc]
     def __init__(self, parent, poll_ms: int = 4000):
+        _require_ctk()
         super().__init__(parent)
         self.poll_ms = poll_ms
 
