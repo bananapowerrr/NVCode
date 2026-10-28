@@ -426,7 +426,27 @@ class RPCacheSkillsMixin:
         if not message:
             return None
 
-        # Deterministic micro-refactor (stdlib/libcst) before broader skills
+        rr_payload = self._skill_try_refactorer(task, message, proj)
+        if rr_payload is not None:
+            return rr_payload
+
+        skills = self._skill_registry(proj)
+        if skills is None:
+            return None
+
+        skill_name = self._skill_match(task, message, skills)
+        if not skill_name:
+            return None
+
+        self._skill_emit_start(task, message, skill_name)
+        kwargs = self._skill_build_kwargs(task, message, skill_name, proj)
+        if kwargs is None:
+            return None
+        return self._skill_execute(skill_name, skills, kwargs)
+
+
+    def _skill_try_refactorer(self, task: Task, message: str, proj) -> dict | None:
+        """Deterministic micro-refactor (stdlib/libcst) before broader skills."""
         try:
             from skills.refactorer import try_refactor_from_message
             rr = try_refactor_from_message(
@@ -447,7 +467,11 @@ class RPCacheSkillsMixin:
                 }
         except Exception:
             pass
+        return None
 
+
+    def _skill_registry(self, proj):
+        """Глобальный реестр skills (tools.root на текущий проект); None если выключены."""
         try:
             if not is_enabled("skills"):
                 raise ImportError("skills disabled")
@@ -461,7 +485,11 @@ class RPCacheSkillsMixin:
             skills = SKILLS
         except ImportError:
             return None
+        return skills
 
+
+    def _skill_match(self, task: Task, message: str, skills) -> str:
+        """suggested_skill из metadata, иначе skills.match(message)."""
         skill_name = None
         try:
             meta = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
@@ -472,9 +500,26 @@ class RPCacheSkillsMixin:
             pass
         if not skill_name:
             skill_name = skills.match(message)
-        if not skill_name:
-            return None
+        return skill_name
 
+
+    def _skill_emit_start(self, task: Task, message: str, skill_name: str) -> None:
+        """Эмит SKILL + лог перед выполнением навыка."""
+        self._emit(
+            "SKILL",
+            f"skill:{skill_name}",
+            task_id=task.id,
+            worker=self.worker_id,
+            payload={"skill": skill_name, "message": message[:500]},
+        )
+        try:
+            self.log.write(f"skill try: {skill_name} task={task.id}")
+        except Exception:
+            pass
+
+
+    def _skill_build_kwargs(self, task: Task, message: str, skill_name: str, proj) -> dict | None:
+        """kwargs для skills.execute; None = search-паттерн не найден (отдаём LLM)."""
         # Prefer project root as path; scope files via files=
         # (passing a single file as path broke skills that join root/files)
         path_arg = str(proj) if proj else None
@@ -519,7 +564,11 @@ class RPCacheSkillsMixin:
                 kwargs["pattern"] = m.group(1)
             else:
                 return None
+        return kwargs
 
+
+    def _skill_execute(self, skill_name: str, skills, kwargs: dict) -> dict | None:
+        """Выполнить навык; payload-словарь или None (fail/пустой результат → LLM)."""
         import time as _time
         _skill_t0 = _time.monotonic()
         result = skills.execute(skill_name, **kwargs)
