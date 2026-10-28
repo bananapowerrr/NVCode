@@ -1,0 +1,2 @@
+src/core/rp_llm.py::RPLlmMixin._llm_finalize_side_effects
+src/core/rp_llm.py::RPLlmMixin._llm_try_one_worker
