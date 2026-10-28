@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
 from __future__ import annotations
 import os
 import sys
@@ -151,12 +151,15 @@ VERIFY_FAIL_MAX = max(1, _int("AGENTBUS_VERIFY_FAIL_MAX", 3))
 # park | stash | branch | allow — dirty worktree before worker
 DIRTY_GIT_POLICY = (os.getenv("AGENTBUS_DIRTY_GIT", "park") or "park").strip().lower()
 VERIFY_TIMEOUT = max(30, _int("AGENTBUS_VERIFY_TIMEOUT", 300))
+# Phone file-bus (gpt/grok/gemini Dropbox folders) retired (TD-021).
+# Intake is desktop chat / IDE / Protocol only. Empty default = do not poll
+# legacy channel dirs. Opt-in: AGENTBUS_CHANNELS=gpt,grok (unsupported path).
 CHANNELS = tuple(
     x.strip()
-    for x in os.getenv("AGENTBUS_CHANNELS", "gpt,grok,gemini,autopilot").split(",")
+    for x in os.getenv("AGENTBUS_CHANNELS", "").split(",")
     if x.strip()
 )
-DEFAULT_CHANNEL = os.getenv("AGENTBUS_DEFAULT_CHANNEL", "gpt").strip() or "gpt"
+DEFAULT_CHANNEL = os.getenv("AGENTBUS_DEFAULT_CHANNEL", "desktop").strip() or "desktop"
 
 
 # --- Meta classifier & decompose (direct Ollama HTTP) ---
