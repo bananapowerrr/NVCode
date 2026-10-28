@@ -1136,100 +1136,14 @@ class RPLlmMixin:
         if verify_exhausted and cat in ("CODE_ERROR", "TEST_ERROR", "UNKNOWN_ERROR", "ENV_ERROR"):
             cat = cat or "CODE_ERROR"
         if task.attempts >= MAX_ATTEMPTS or verify_exhausted:
-            final = "BLOCKED" if cat in ("CODE_ERROR", "TEST_ERROR", "UNKNOWN_ERROR") else "ERROR"
-            if verify_exhausted and task.attempts < MAX_ATTEMPTS:
-                final = "BLOCKED"
-                last_err = (
-                    f"VERIFY_BUDGET_EXHAUSTED (>{VERIFY_FAIL_MAX} consecutive verify fails): "
-                    + (last_err or "")
-                )[:4000]
-            elif task.attempts >= MAX_ATTEMPTS:
-                last_err = (
-                    f"RETRY_BUDGET_EXHAUSTED (attempts>={MAX_ATTEMPTS}): "
-                    + (last_err or "")
-                )[:4000]
-            qpath = None
-            try:
-                qpath = self._quarantine_exhausted_task(
-                    task,
-                    reason=last_err,
-                    category=cat,
-                    gitops=gitops,
-                    before_snapshot=before_snapshot,
-                    extra={
-                        "final": final,
-                        "verify_exhausted": bool(verify_exhausted),
-                        "max_attempts": MAX_ATTEMPTS,
-                        "consecutive_verify_fails": int(
-                            (task.metadata or {}).get("consecutive_verify_fails") or 0
-                        ),
-                    },
-                )
-            except Exception as qexc:
-                try:
-                    self.log.write(f"quarantine enforcer: {qexc}")
-                except Exception:
-                    pass
-                try:
-                    self._rollback_task(gitops, before_snapshot, task)
-                except Exception:
-                    pass
-            try:
-                return self.finish_task(
-                    task,
-                    final,
-                    {
-                        "error": last_err,
-                        "attempts": int(task.attempts or 0),
-                        "category": cat,
-                        "quarantine": str(qpath) if qpath else "",
-                        "quarantined": True,
-                    },
-                    error=last_err,
-                )
-            except Exception as exc:
-                self.log.write(f"quarantine enforcer: {exc}")
-                return "ERROR"
+            return self._llm_exhausted_terminal(
+                task, gitops, before_snapshot,
+                cat, last_err, verify_exhausted)
 
         self._rollback_task(gitops, before_snapshot, task)
         gate_reason = self._paid_gate_deferred_reason()
         if gate_reason:
-            # Повтор здесь бессмысленен: локальных исполнителей нет, а облака
-            # закрыты политикой. Платить за прогон 7B ради того же DEFERRED
-            # нельзя — возвращаем задачу в deferred без backoff.
-            try:
-                self.log.write(f"deferred by paid gate: {gate_reason}")
-            except Exception:
-                pass
-            # Локальных исполнителей нет, облака закрыты → по замыслу это
-            # работа для 1.5B мета: она режет задачу на атомарные шаги.
-            meta_dec_paid: dict[str, Any] = {}
-            try:
-                from skills.meta_decompose import try_decompose_failed_task
-                meta_dec_paid = try_decompose_failed_task(
-                    self, task, failure_reason="paid_gate_blocked",
-                ) or {}
-            except Exception as decomp_err:
-                try:
-                    self.log.write(
-                        f"meta_decompose failed (defer без декомпозиции): {decomp_err}"
-                    )
-                except Exception:
-                    pass
-                meta_dec_paid = {}
-            return self.finish_task(
-                task,
-                "DEFERRED",
-                {
-                    "error": gate_reason,
-                    "attempts": int(task.attempts or 0),
-                    "category": cat,
-                    "decomposition_required": True,
-                    "paid_workers_blocked": True,
-                    **meta_dec_paid,
-                },
-                error=gate_reason,
-            )
+            return self._llm_exhausted_paid_gate(task, cat, gate_reason)
         self._schedule_retry(task, last_err)
         return self.finish_task(
             task,
@@ -1240,6 +1154,103 @@ class RPLlmMixin:
                 "category": cat,
             },
             error=last_err,
+        )
+
+    def _llm_exhausted_terminal(self, task, gitops, before_snapshot,
+                                cat, last_err, verify_exhausted) -> str:
+        """Retry/verify-бюджет исчерпан: BLOCKED/ERROR, карантин, finish_task."""
+        final = "BLOCKED" if cat in ("CODE_ERROR", "TEST_ERROR", "UNKNOWN_ERROR") else "ERROR"
+        if verify_exhausted and task.attempts < MAX_ATTEMPTS:
+            final = "BLOCKED"
+            last_err = (
+                f"VERIFY_BUDGET_EXHAUSTED (>{VERIFY_FAIL_MAX} consecutive verify fails): "
+                + (last_err or "")
+            )[:4000]
+        elif task.attempts >= MAX_ATTEMPTS:
+            last_err = (
+                f"RETRY_BUDGET_EXHAUSTED (attempts>={MAX_ATTEMPTS}): "
+                + (last_err or "")
+            )[:4000]
+        qpath = None
+        try:
+            qpath = self._quarantine_exhausted_task(
+                task,
+                reason=last_err,
+                category=cat,
+                gitops=gitops,
+                before_snapshot=before_snapshot,
+                extra={
+                    "final": final,
+                    "verify_exhausted": bool(verify_exhausted),
+                    "max_attempts": MAX_ATTEMPTS,
+                    "consecutive_verify_fails": int(
+                        (task.metadata or {}).get("consecutive_verify_fails") or 0
+                    ),
+                },
+            )
+        except Exception as qexc:
+            try:
+                self.log.write(f"quarantine enforcer: {qexc}")
+            except Exception:
+                pass
+            try:
+                self._rollback_task(gitops, before_snapshot, task)
+            except Exception:
+                pass
+        try:
+            return self.finish_task(
+                task,
+                final,
+                {
+                    "error": last_err,
+                    "attempts": int(task.attempts or 0),
+                    "category": cat,
+                    "quarantine": str(qpath) if qpath else "",
+                    "quarantined": True,
+                },
+                error=last_err,
+            )
+        except Exception as exc:
+            self.log.write(f"quarantine enforcer: {exc}")
+            return "ERROR"
+
+    def _llm_exhausted_paid_gate(self, task, cat, gate_reason) -> str:
+        """Paid-gate: DEFERRED без backoff + попытка локальной декомпозиции (1.5B мета)."""
+        # Повтор здесь бессмысленен: локальных исполнителей нет, а облака
+        # закрыты политикой. Платить за прогон 7B ради того же DEFERRED
+        # нельзя — возвращаем задачу в deferred без backoff.
+        try:
+            self.log.write(f"deferred by paid gate: {gate_reason}")
+        except Exception:
+            pass
+        # Локальных исполнителей нет, облака закрыты → по замыслу это
+        # работа для 1.5B мета: она режет задачу на атомарные шаги.
+        meta_dec_paid: dict[str, Any] = {}
+        try:
+            from skills.meta_decompose import try_decompose_failed_task
+            meta_dec_paid = try_decompose_failed_task(
+                self, task, failure_reason="paid_gate_blocked",
+            ) or {}
+        except Exception as decomp_err:
+            try:
+                self.log.write(
+                    f"meta_decompose failed (defer без декомпозиции): {decomp_err}"
+                )
+            except Exception:
+                pass
+            meta_dec_paid = {}
+        return self.finish_task(
+            task,
+            "DEFERRED",
+            {
+                "error": gate_reason,
+                "attempts": int(task.attempts or 0),
+                "category": cat,
+                "decomposition_required": True,
+                "paid_workers_blocked": True,
+                **meta_dec_paid,
+            },
+            error=gate_reason,
         )
 
     def _paid_gate_deferred_reason(self) -> str:
