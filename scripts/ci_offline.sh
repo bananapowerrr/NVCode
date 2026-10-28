@@ -51,16 +51,16 @@ fi
 echo
 
 echo "== 5. quality gates (ub-mode ratchet, advisory) =="
-# Advisory until the first local run validates the baseline (max comp in repo = 40 —
-# _try_skill; AST counter may differ slightly). Ratchet stage 40 reached 2026-10-28
-# (process/run_forever/_tr_changes decomposed); next targets 25 -> 12.
+# Advisory until the first local run validates the baseline (stage-25 ratchet done
+# 2026-10-28: top functions decomposed, see docs/UB_MODE_AUDIT.md; AST counter may
+# differ slightly, leftovers 26-35 are next ratchet targets). Next: 25 -> 12.
 # After a green run either decompose offenders or freeze them:
-# python scripts/quality_gates.py --update-allowlist --max 40
+# python scripts/quality_gates.py --update-allowlist --max 25
 # then re-enable the fail=1 line below.
-if python scripts/quality_gates.py --gate --max 40; then
+if python scripts/quality_gates.py --gate --max 25; then
   echo "  quality gates OK"
 else
-  echo "  quality gates ADVISORY: comp > 40 found (list above) — decompose or allowlist, then re-enable fail=1"
+  echo "  quality gates ADVISORY: comp > 25 found (list above) — decompose or allowlist, then re-enable fail=1"
   # fail=1
 fi
 echo
