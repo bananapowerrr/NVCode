@@ -503,6 +503,40 @@ class Runtime(RuntimeOps, RuntimeProcess):
         self.report = NightlyReport(self.log, LOG_ROOT)
         self.log.write(f"AgentBus запущен | {self.worker_id} | channel=file-bus")
         self.log.write(f"воркеры: {', '.join(w.name for w in self.workers)}")
+        self._startup_recover()
+
+        self._running = True
+        while True:
+            try:
+                self._flush_backoff()
+                self._heartbeat()
+                self._loop_tick_flags()
+                self._loop_tick_reclaim()
+                self._probe_providers()
+                self._maybe_dump_metrics()
+                try:
+                    self._maybe_run_autopilot()
+                except Exception as exc:
+                    self.log.write(f"autopilot tick: {exc}")
+                self._loop_tick_status_board()
+                self._loop_tick_archive()
+                raw = self._loop_claim()
+                if raw:
+                    if raw.get("id") in self._backoff:
+                        time.sleep(POLL_SECONDS)
+                        continue
+                    self.process(raw)
+                else:
+                    time.sleep(POLL_SECONDS)
+            except KeyboardInterrupt:
+                self._loop_interrupt(lock)
+                return
+            except Exception as exc:
+                self.log.write(f"цикл: {type(exc).__name__}: {exc}")
+                time.sleep(POLL_SECONDS)
+
+    def _startup_recover(self) -> None:
+        """Восстановление перед стартом цикла: reclaim processing, deferred, dynamic pool."""
         try:
             rec = self._recover_stale_processing(LEASE_SECONDS)
             if rec:
@@ -520,125 +554,121 @@ class Runtime(RuntimeOps, RuntimeProcess):
         except Exception as exc:
             self.log.write(f"dynamic: {exc}")
 
-        self._running = True
-        while True:
-            try:
-                self._flush_backoff()
-                self._heartbeat()
-                try:
-                    # hot-reload feature_flags.yaml (mtime) without restart
-                    if not hasattr(self, "_flags_mtime"):
-                        self._flags_mtime = 0.0
-                    if (time.monotonic() - getattr(self, "_flags_check_at", 0.0)) >= 15.0:
-                        self._flags_check_at = time.monotonic()
-                        from core.feature_flags import config_path, reload_flags
-                        cp = config_path()
-                        if cp is not None and cp.is_file():
-                            mt = cp.stat().st_mtime
-                            if mt != self._flags_mtime:
-                                self._flags_mtime = mt
-                                snap = reload_flags()
-                                try:
-                                    from core.plugin_registry import clear_cache
-                                    clear_cache()
-                                except Exception:
-                                    pass
-                                self.log.write(
-                                    f"feature_flags reload: "
-                                    f"on={sum(1 for v in snap.values() if v)} "
-                                    f"off={sum(1 for v in snap.values() if not v)}"
-                                )
-                except Exception as exc:
-                    try:
-                        self.log.write(f"feature_flags tick: {exc}")
-                    except Exception:
-                        pass
-                try:
-                    # periodic reclaim (adaptive); cheap if nothing stuck
-                    if not hasattr(self, "_reclaim_last"):
-                        self._reclaim_last = 0.0
-                    if (time.monotonic() - self._reclaim_last) >= max(30.0, float(POLL_SECONDS) * 6):
-                        self._reclaim_last = time.monotonic()
-                        n = self._recover_stale_processing(LEASE_SECONDS)
-                        if n:
-                            self.log.write(f"processing reclaim tick: {n}")
-                except Exception as exc:
-                    self.log.write(f"reclaim tick: {exc}")
-                self._probe_providers()
-                self._maybe_dump_metrics()
-                try:
-                    self._maybe_run_autopilot()
-                except Exception as exc:
-                    self.log.write(f"autopilot tick: {exc}")
-                try:
-                    if not hasattr(self, "_status_board_at"):
-                        self._status_board_at = 0.0
-                    if (time.monotonic() - self._status_board_at) >= float(__import__("os").getenv("AGENTBUS_STATUS_BOARD_SEC", "300") or 300):
-                        self._status_board_at = time.monotonic()
-                        from utils.status_board import print_board
-                        print_board()
-                except Exception:
-                    pass
-                try:
-                    if not hasattr(self, "_archive_prune_at"):
-                        self._archive_prune_at = 0.0
-                    if (time.monotonic() - self._archive_prune_at) >= 3600.0:
-                        self._archive_prune_at = time.monotonic()
-                        from utils.log_archive import prune_old_archives
-                        from core.config import BUS_ROOT
-                        stats = prune_old_archives(BUS_ROOT)
-                        if stats.get("deleted"):
-                            self.log.write(f"archive prune: {stats}")
-                except Exception as exc:
-                    try:
-                        self.log.write(f"archive prune: {exc}")
-                    except Exception:
-                        pass
-                raw = None
-                try:
-                    raw = self._claim_desktop_queue()
-                except Exception:
-                    raw = None
-                if raw is None:
-                    # Optional phone/remote file-bus
-                    try:
-                        from core.feature_flags import is_enabled
-                        phone = is_enabled("phone_filebus", default=False) or is_enabled(
-                            "remote_filebus", default=False
+    def _loop_tick_flags(self) -> None:
+        """Тик цикла: hot-reload feature_flags.yaml (mtime) без рестарта."""
+        try:
+            # hot-reload feature_flags.yaml (mtime) without restart
+            if not hasattr(self, "_flags_mtime"):
+                self._flags_mtime = 0.0
+            if (time.monotonic() - getattr(self, "_flags_check_at", 0.0)) >= 15.0:
+                self._flags_check_at = time.monotonic()
+                from core.feature_flags import config_path, reload_flags
+                cp = config_path()
+                if cp is not None and cp.is_file():
+                    mt = cp.stat().st_mtime
+                    if mt != self._flags_mtime:
+                        self._flags_mtime = mt
+                        snap = reload_flags()
+                        try:
+                            from core.plugin_registry import clear_cache
+                            clear_cache()
+                        except Exception:
+                            pass
+                        self.log.write(
+                            f"feature_flags reload: "
+                            f"on={sum(1 for v in snap.values() if v)} "
+                            f"off={sum(1 for v in snap.values() if not v)}"
                         )
-                    except Exception:
-                        phone = False
-                    if phone:
-                        raw = self._claim_file_task()
-                if raw:
-                    if raw.get("id") in self._backoff:
-                        time.sleep(POLL_SECONDS)
-                        continue
-                    self.process(raw)
-                else:
-                    time.sleep(POLL_SECONDS)
-            except KeyboardInterrupt:
-                self._running = False
-                self.log.write("стоп Ctrl+C")
-                try:
-                    self.report.set_provider_cooldowns(self.capacity.cooldown_list())
-                except Exception:
-                    pass
-                path = self.report.save("interrupt")
-                if path:
-                    self.log.write(f"отчёт: {path}")
-                try:
-                    mp = self.metrics.save_to_file(LOG_ROOT / "metrics_interrupt.json")
-                    self.log.write(f"metrics: {mp}")
-                    bp = self.tracker.save_report(LOG_ROOT / "budget_interrupt.json")
-                    self.log.write(f"budget: {bp}")
-                except Exception as exc:
-                    self.log.write(f"metrics save: {exc}")
-                lock.release()
-                return
-            except Exception as exc:
-                self.log.write(f"цикл: {type(exc).__name__}: {exc}")
-                time.sleep(POLL_SECONDS)
+        except Exception as exc:
+            try:
+                self.log.write(f"feature_flags tick: {exc}")
+            except Exception:
+                pass
+
+    def _loop_tick_reclaim(self) -> None:
+        """Тик цикла: периодический reclaim застрявших processing-задач."""
+        try:
+            # periodic reclaim (adaptive); cheap if nothing stuck
+            if not hasattr(self, "_reclaim_last"):
+                self._reclaim_last = 0.0
+            if (time.monotonic() - self._reclaim_last) >= max(30.0, float(POLL_SECONDS) * 6):
+                self._reclaim_last = time.monotonic()
+                n = self._recover_stale_processing(LEASE_SECONDS)
+                if n:
+                    self.log.write(f"processing reclaim tick: {n}")
+        except Exception as exc:
+            self.log.write(f"reclaim tick: {exc}")
+
+    def _loop_tick_status_board(self) -> None:
+        """Тик цикла: периодическая печать статус-борда."""
+        try:
+            if not hasattr(self, "_status_board_at"):
+                self._status_board_at = 0.0
+            if (time.monotonic() - self._status_board_at) >= float(__import__("os").getenv("AGENTBUS_STATUS_BOARD_SEC", "300") or 300):
+                self._status_board_at = time.monotonic()
+                from utils.status_board import print_board
+                print_board()
+        except Exception:
+            pass
+
+    def _loop_tick_archive(self) -> None:
+        """Тик цикла: периодическая чистка старых архивов логов."""
+        try:
+            if not hasattr(self, "_archive_prune_at"):
+                self._archive_prune_at = 0.0
+            if (time.monotonic() - self._archive_prune_at) >= 3600.0:
+                self._archive_prune_at = time.monotonic()
+                from utils.log_archive import prune_old_archives
+                from core.config import BUS_ROOT
+                stats = prune_old_archives(BUS_ROOT)
+                if stats.get("deleted"):
+                    self.log.write(f"archive prune: {stats}")
+        except Exception as exc:
+            try:
+                self.log.write(f"archive prune: {exc}")
+            except Exception:
+                pass
+
+    def _loop_claim(self) -> dict | None:
+        """Клейм desktop-очереди; опционально phone/remote file-bus."""
+        raw = None
+        try:
+            raw = self._claim_desktop_queue()
+        except Exception:
+            raw = None
+        if raw is None:
+            # Optional phone/remote file-bus
+            try:
+                from core.feature_flags import is_enabled
+                phone = is_enabled("phone_filebus", default=False) or is_enabled(
+                    "remote_filebus", default=False
+                )
+            except Exception:
+                phone = False
+            if phone:
+                raw = self._claim_file_task()
+        return raw
+
+    def _loop_interrupt(self, lock: DispatcherLock) -> None:
+        """Ctrl+C: сохранить отчёт/метрики/budget, снять dispatcher lock."""
+        self._running = False
+        self.log.write("стоп Ctrl+C")
+        try:
+            self.report.set_provider_cooldowns(self.capacity.cooldown_list())
+        except Exception:
+            pass
+        path = self.report.save("interrupt")
+        if path:
+            self.log.write(f"отчёт: {path}")
+        try:
+            mp = self.metrics.save_to_file(LOG_ROOT / "metrics_interrupt.json")
+            self.log.write(f"metrics: {mp}")
+            bp = self.tracker.save_report(LOG_ROOT / "budget_interrupt.json")
+            self.log.write(f"budget: {bp}")
+        except Exception as exc:
+            self.log.write(f"metrics save: {exc}")
+        lock.release()
+        return
 
     def _maybe_defer_for_night(self, raw: dict) -> bool:
         """If AGENTBUS_NIGHT_MODE is on and task should wait for night → deferred.
