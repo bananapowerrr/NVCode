@@ -242,6 +242,116 @@ def _is_plan_only(w) -> bool:
     return "plan" in tuple(caps)
 
 
+def _worker_skip_reason(
+    w, *, health, capacity, cap_worker_usable, allow_paid,
+    required_cap, writes_files, soft_penalty,
+) -> str | None:
+    """Filter gates for one worker: skip reason, or None if usable.
+
+    Дословный перенос тела цикла select_executor (c-long-040046):
+    каждая отсечка прежним _skip(w, reason)+continue стала return reason.
+    """
+    if not getattr(w, "enabled", True):
+        return "disabled"
+    if not allow_paid:
+        try:
+            from core.paid_gate import is_paid_worker
+            if is_paid_worker(w):
+                return "paid_disallowed[ALLOW_PAID=0]"
+        except Exception as _paid_err:
+            # Неизвестная цена = платно. Шлюз не должен «падать в открытый»
+            # из-за внутренней ошибки (c-long-040046).
+            return f"paid_gate_error[{type(_paid_err).__name__}]"
+    # Plan-only воркер не создаёт файлы: отдача ему задачу на запись
+    # гарантированно даёт пустой результат и DEFERRED по построению
+    # (c-long-040046). Планирование без files по-прежнему разрешено.
+    if writes_files and _is_plan_only(w):
+        return "plan_only_no_file_write"
+    if not health.available(w.name):
+        return "health_unavailable"
+    if cap_worker_usable is not None:
+        try:
+            if not cap_worker_usable(w):
+                return "cap_worker_usable_false"
+        except Exception:
+            pass
+    if capacity is not None:
+        cap_key = f"{w.provider}:{w.model or 'auto'}"
+        try:
+            if not capacity.available(cap_key):
+                return f"capacity_unavailable[{cap_key}]"
+            qf = capacity.quota_factor(cap_key)
+            if qf < 1.0:
+                soft_penalty[w.name] = (1.0 - qf) * SOFT_QUOTA_PENALTY
+        except Exception:
+            pass
+    if required_cap:
+        wc = getattr(w, "capabilities", None) or ()
+        if wc and required_cap not in wc:
+            return f"required_cap[{required_cap}]"
+
+
+def _worker_score(
+    w, *, health, raw, ranker, complexity, task_type, soft_penalty,
+) -> float:
+    """Score one usable worker: capability·health·cost·reliability·risk (Router 2.0)."""
+    score = health.score(w.name, complexity, w.complexity, w.quality)
+    score -= soft_penalty.get(w.name, 0.0)
+    score += _role_bonus(w, task_type, complexity)
+    score += _local_first_bonus(w, raw)
+    w_tier = int(getattr(w, "tier", 5) or 5)
+    need = min_tier_for_complexity(complexity)
+    if complexity <= 2:
+        score += max(0, 6 - w_tier) * 0.15
+    else:
+        score += max(0, w_tier - need) * 0.2
+    # Stage 5 / Router 2.0: capability·health·cost·reliability·risk
+    try:
+        from core.router_score import score_worker_v2
+        task_payload = dict(raw or {})
+        task_payload["complexity"] = complexity
+        br = score_worker_v2(
+            w,
+            task_payload,
+            health_ok=True,  # already filtered by health.available
+            ranking=ranker,
+            prefer_local=True,
+        )
+        # map 0..1 → contribution in legacy score space
+        score += max(-3.0, min(12.0, br.total * 10.0))
+        try:
+            meta = task_payload.setdefault("metadata", {})
+            if isinstance(meta, dict):
+                meta.setdefault("_router_v2", {})[w.name] = br.to_dict()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            from core.worker_api import score_worker
+            from types import SimpleNamespace
+            task_ns = SimpleNamespace(
+                complexity=complexity,
+                metadata=(raw or {}).get("metadata") if isinstance(raw, dict) else {},
+            )
+            api_score = score_worker(w, task_ns)
+            score += max(-5.0, min(15.0, float(api_score) * 8.0))
+        except Exception:
+            pass
+    # Meta hint: prefer suggested_worker slightly
+    try:
+        meta = (raw or {}).get("metadata") if isinstance(raw, dict) else {}
+        sug = str((meta or {}).get("suggested_worker") or "").strip()
+        if sug and w.name == sug:
+            score += 1.5
+    except Exception:
+        pass
+    if ranker is not None and score > 0:
+        score = ranker.apply_bias(
+            score, getattr(w, "harness", "cli"), w.provider, w.model,
+            complexity=complexity, task_type=task_type,
+        )
+
+
 def select_executor(workers, health, raw: dict[str, Any] | None,
                     requested: str = "", ranker=None, capacity=None,
                     required_cap: str | None = None,
@@ -274,110 +384,20 @@ def select_executor(workers, health, raw: dict[str, Any] | None,
                   w.name, reason, _task_id or "-", requested or "-")
 
     for w in workers:
-        if not getattr(w, "enabled", True):
-            _skip(w, "disabled")
+    for w in workers:
+        reason = _worker_skip_reason(
+            w, health=health, capacity=capacity, cap_worker_usable=cap_worker_usable,
+            allow_paid=allow_paid, required_cap=required_cap,
+            writes_files=_writes_files, soft_penalty=soft_penalty)
+        if reason is not None:
+            _skip(w, reason)
             continue
-        if not allow_paid:
-            try:
-                from core.paid_gate import is_paid_worker
-                if is_paid_worker(w):
-                    _skip(w, "paid_disallowed[ALLOW_PAID=0]")
-                    continue
-            except Exception as _paid_err:
-                # Неизвестная цена = платно. Шлюз не должен «падать в открытый»
-                # из-за внутренней ошибки (c-long-040046).
-                _skip(w, f"paid_gate_error[{type(_paid_err).__name__}]")
-                continue
-        # Plan-only воркер не создаёт файлы: отдача ему задачу на запись
-        # гарантированно даёт пустой результат и DEFERRED по построению
-        # (c-long-040046). Планирование без files по-прежнему разрешено.
-        if _writes_files and _is_plan_only(w):
-            _skip(w, "plan_only_no_file_write")
-            continue
-        if not health.available(w.name):
-            _skip(w, "health_unavailable")
-            continue
-        if cap_worker_usable is not None:
-            try:
-                if not cap_worker_usable(w):
-                    _skip(w, "cap_worker_usable_false")
-                    continue
-            except Exception:
-                pass
-        if capacity is not None:
-            cap_key = f"{w.provider}:{w.model or 'auto'}"
-            try:
-                if not capacity.available(cap_key):
-                    _skip(w, f"capacity_unavailable[{cap_key}]")
-                    continue
-                qf = capacity.quota_factor(cap_key)
-                if qf < 1.0:
-                    soft_penalty[w.name] = (1.0 - qf) * SOFT_QUOTA_PENALTY
-            except Exception:
-                pass
-        if required_cap:
-            wc = getattr(w, "capabilities", None) or ()
-            if wc and required_cap not in wc:
-                _skip(w, f"required_cap[{required_cap}]")
-                continue
-        score = health.score(w.name, complexity, w.complexity, w.quality)
+        score = _worker_score(
+            w, health=health, raw=raw, ranker=ranker,
+            complexity=complexity, task_type=task_type, soft_penalty=soft_penalty)
         if score < 0:
             _skip(w, f"negative_health_score({score:.2f})")
             continue
-        score -= soft_penalty.get(w.name, 0.0)
-        score += _role_bonus(w, task_type, complexity)
-        score += _local_first_bonus(w, raw)
-        w_tier = int(getattr(w, "tier", 5) or 5)
-        need = min_tier_for_complexity(complexity)
-        if complexity <= 2:
-            score += max(0, 6 - w_tier) * 0.15
-        else:
-            score += max(0, w_tier - need) * 0.2
-        # Stage 5 / Router 2.0: capability·health·cost·reliability·risk
-        try:
-            from core.router_score import score_worker_v2
-            task_payload = dict(raw or {})
-            task_payload["complexity"] = complexity
-            br = score_worker_v2(
-                w,
-                task_payload,
-                health_ok=True,  # already filtered by health.available
-                ranking=ranker,
-                prefer_local=True,
-            )
-            # map 0..1 → contribution in legacy score space
-            score += max(-3.0, min(12.0, br.total * 10.0))
-            try:
-                meta = task_payload.setdefault("metadata", {})
-                if isinstance(meta, dict):
-                    meta.setdefault("_router_v2", {})[w.name] = br.to_dict()
-            except Exception:
-                pass
-        except Exception:
-            try:
-                from core.worker_api import score_worker
-                from types import SimpleNamespace
-                task_ns = SimpleNamespace(
-                    complexity=complexity,
-                    metadata=(raw or {}).get("metadata") if isinstance(raw, dict) else {},
-                )
-                api_score = score_worker(w, task_ns)
-                score += max(-5.0, min(15.0, float(api_score) * 8.0))
-            except Exception:
-                pass
-        # Meta hint: prefer suggested_worker slightly
-        try:
-            meta = (raw or {}).get("metadata") if isinstance(raw, dict) else {}
-            sug = str((meta or {}).get("suggested_worker") or "").strip()
-            if sug and w.name == sug:
-                score += 1.5
-        except Exception:
-            pass
-        if ranker is not None and score > 0:
-            score = ranker.apply_bias(
-                score, getattr(w, "harness", "cli"), w.provider, w.model,
-                complexity=complexity, task_type=task_type,
-            )
         candidates.append((score, w))
 
     if not candidates:
