@@ -34,11 +34,14 @@ def _ver_label(name: str, path: str, args=("--version",), cwd=None, tmo=20) -> s
     return f"{name} = {path}\n    {line}"
 
 
-def _diagnose() -> int:
+def _diag_header() -> None:
     print(f"AgentBus root    = {ROOT}")
     print(f"src/             = {SRC}")
     print(f"Python           = {sys.executable} v{sys.version.split()[0]}")
     print(f"Чтобы проверить   : {sys.executable} -m pytest -q tests")
+
+
+def _diag_config() -> None:
     from core.config import (
         AIDER_PATH, OPENCODE_PATH, AIDER_PYTHON, OLLAMA_PATH,
         list_projects, GIT_ENABLED, WORKERS_FILE, PROVIDERS_FILE,
@@ -57,6 +60,8 @@ def _diagnose() -> int:
     print(f"GIT_ENABLED = {GIT_ENABLED}")
     print(f"TASK_CHANNEL = file-bus (Dropbox/local)")
 
+
+def _diag_projects() -> None:
     print("\n-- проекты --")
     try:
         projs = list_projects()
@@ -66,6 +71,9 @@ def _diagnose() -> int:
             print("  (нет PROJECT_* в .env)")
     except Exception as exp:
         print(f"  err: {exp}")
+
+
+def _diag_modules() -> None:
     print("\n-- python-модули --")
     # A bare __import__ is not proof: PyPI `aider` is an unrelated package that
     # imports fine but ships no CLI. Ask the *distribution* what is installed.
@@ -82,6 +90,9 @@ def _diagnose() -> int:
             print(f"  {mod:12s} OK v{ver}")
         except Exception:
             print(f"  {mod:12s} v{ver} (дистрибутив есть, импорт падает)")
+
+
+def _diag_providers() -> None:
     print("\n-- провайдеры / воркеры --")
     try:
         ps = load_providers()
@@ -99,6 +110,9 @@ def _diagnose() -> int:
             print(f"  воркеры: {type(exp).__name__}: {exp}")
     except Exception as exp:
         print(f"  провайдеры: {type(exp).__name__}: {exp}")
+
+
+def _diag_budget_metrics_env() -> None:
     try:
         from utils.budget import GLOBAL_BUDGET
         print("\n-- бюджет --")
@@ -123,6 +137,9 @@ def _diagnose() -> int:
     except Exception as exp:
         print(f"  environment: {exp}")
     
+
+
+def _diag_task_channel() -> None:
     print("\n-- канал задач (продукт) --")
     print("  primary = desktop chat (UI) → .agentbus/desktop_queue/")
     print("  phone file-bus = optional (feature phone_filebus)")
@@ -143,6 +160,9 @@ def _diagnose() -> int:
         print(f"  desktop_queue size = {n}")
     except Exception as exp:
         print(f"  desktop_queue ERR: {exp}")
+
+
+def _diag_flags_policy() -> None:
     try:
         from core.feature_flags import is_enabled
         print(f"  phone_filebus = {is_enabled('phone_filebus', default=False)}")
@@ -155,6 +175,9 @@ def _diagnose() -> int:
         print(f"  policy = {pol.name} cloud={pol.allow_cloud} privacy={pol.privacy}")
     except Exception as exp:
         print(f"  policy ERR: {exp}")
+
+
+def _diag_runtimes_backends() -> None:
     try:
         from cli.init_wizard import discover_local_stack
         disc = discover_local_stack()
@@ -187,6 +210,17 @@ def _diagnose() -> int:
     except Exception as exp:
         print(f"  backends ERR: {exp}")
 
+
+def _diagnose() -> int:
+    _diag_header()
+    _diag_config()
+    _diag_projects()
+    _diag_modules()
+    _diag_providers()
+    _diag_budget_metrics_env()
+    _diag_task_channel()
+    _diag_flags_policy()
+    _diag_runtimes_backends()
     # P0.4 go/no-go
     try:
         from core.doctor import print_doctor
@@ -199,9 +233,88 @@ def _diagnose() -> int:
     return code
 
 
+
+
 # Public aliases: scripts/bootstrap.py (and other entrypoints) import these.
 run_diagnose = _diagnose
 diagnose = _diagnose
+
+
+def _main_init() -> None:
+    try:
+        from cli.init_wizard import run_init_wizard
+        raise SystemExit(run_init_wizard(verbose=True))
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
+
+
+def _main_recipe(argv: list[str]) -> None:
+    try:
+        from cli.recipes import emit_recipe, list_recipes
+        # parse: --recipe NAME [--target PATH] [--project P] [--channel C]
+        name = ""
+        target = ""
+        project = ""
+        channel = "gpt"
+        if "--recipe" in argv:
+            i = argv.index("--recipe")
+            if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                name = argv[i + 1]
+        if name in ("list", "ls", ""):
+            for r in list_recipes():
+                rid = r.get("metadata", {}).get("recipe") or r.get("id") or "?"
+                print(f"  {rid}: {(r.get('message') or '')[:60]}...")
+            raise SystemExit(0)
+        if "--target" in argv:
+            j = argv.index("--target")
+            if j + 1 < len(argv):
+                target = argv[j + 1]
+        if "--project" in argv:
+            j = argv.index("--project")
+            if j + 1 < len(argv):
+                project = argv[j + 1]
+        if "--channel" in argv:
+            j = argv.index("--channel")
+            if j + 1 < len(argv):
+                channel = argv[j + 1]
+        path = emit_recipe(name, target=target or None, project=project, channel=channel)
+        print(f"recipe → {path}")
+        raise SystemExit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
+
+
+def _main_dashboard(argv: list[str]) -> None:
+    try:
+        host, port = "127.0.0.1", 8337
+        if "--port" in argv:
+            i = argv.index("--port")
+            if i + 1 < len(argv):
+                port = int(argv[i + 1])
+        from cli.dashboard_server import run_dashboard
+        raise SystemExit(run_dashboard(host=host, port=port))
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
+
+
+def _main_doctor() -> None:
+    try:
+        raise SystemExit(_diagnose())
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
+
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -209,73 +322,13 @@ def main(argv: list[str] | None = None) -> None:
         print("AgentBus 0.9.1")
         raise SystemExit(0)
     if "--init" in argv or "init" in argv:
-        try:
-            from cli.init_wizard import run_init_wizard
-            raise SystemExit(run_init_wizard(verbose=True))
-        except SystemExit:
-            raise
-        except Exception:
-            traceback.print_exc()
-            raise SystemExit(1)
+        _main_init()
     if "--recipe" in argv:
-        try:
-            from cli.recipes import emit_recipe, list_recipes
-            # parse: --recipe NAME [--target PATH] [--project P] [--channel C]
-            name = ""
-            target = ""
-            project = ""
-            channel = "gpt"
-            if "--recipe" in argv:
-                i = argv.index("--recipe")
-                if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
-                    name = argv[i + 1]
-            if name in ("list", "ls", ""):
-                for r in list_recipes():
-                    rid = r.get("metadata", {}).get("recipe") or r.get("id") or "?"
-                    print(f"  {rid}: {(r.get('message') or '')[:60]}...")
-                raise SystemExit(0)
-            if "--target" in argv:
-                j = argv.index("--target")
-                if j + 1 < len(argv):
-                    target = argv[j + 1]
-            if "--project" in argv:
-                j = argv.index("--project")
-                if j + 1 < len(argv):
-                    project = argv[j + 1]
-            if "--channel" in argv:
-                j = argv.index("--channel")
-                if j + 1 < len(argv):
-                    channel = argv[j + 1]
-            path = emit_recipe(name, target=target or None, project=project, channel=channel)
-            print(f"recipe → {path}")
-            raise SystemExit(0)
-        except SystemExit:
-            raise
-        except Exception:
-            traceback.print_exc()
-            raise SystemExit(1)
+        _main_recipe(argv)
     if "--dashboard" in argv or "dashboard" in argv:
-        try:
-            host, port = "127.0.0.1", 8337
-            if "--port" in argv:
-                i = argv.index("--port")
-                if i + 1 < len(argv):
-                    port = int(argv[i + 1])
-            from cli.dashboard_server import run_dashboard
-            raise SystemExit(run_dashboard(host=host, port=port))
-        except SystemExit:
-            raise
-        except Exception:
-            traceback.print_exc()
-            raise SystemExit(1)
+        _main_dashboard(argv)
     if "--diagnose" in argv or "--doctor" in argv or "doctor" in argv:
-        try:
-            raise SystemExit(_diagnose())
-        except SystemExit:
-            raise
-        except Exception:
-            traceback.print_exc()
-            raise SystemExit(1)
+        _main_doctor()
     try:
         from core.runtime import Runtime, main as runtime_main
         # Apply feature preset early (AGENTBUS_FEATURE_PRESET / beginner_ru)
