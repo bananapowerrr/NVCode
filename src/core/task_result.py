@@ -607,59 +607,13 @@ def history_card_lines(row: dict[str, Any] | None) -> dict[str, str]:
         tr = build_task_result(row)
         prompt = str(row.get("message") or "").replace("\n", " ").strip()
         out["prompt"] = prompt[:160]
-
-        bits: list[str] = []
-        if tr.worker:
-            bits.append(tr.worker)
-        if tr.skill:
-            bits.append(f"skill:{tr.skill}")
-        if tr.duration_sec:
-            bits.append(f"{tr.duration_sec:.0f}s")
-        if tr.attempts and tr.attempts > 1:
-            bits.append(f"×{tr.attempts}")
-        out["meta"] = " · ".join(bits)
-
-        ver = tr.verification or {}
-        if ver.get("summary"):
-            out["verify"] = str(ver["summary"])[:120]
-        elif "passed" in ver:
-            out["verify"] = (
-                "Verify PASS" if ver.get("passed") else f"Verify FAIL {ver.get('reason') or ''}"
-            )[:120]
-
-        if tr.changes.files:
-            n = len(tr.changes.files)
-            extra = ""
-            if tr.changes.insertions or tr.changes.deletions:
-                extra = f" +{tr.changes.insertions} -{tr.changes.deletions}"
-            out["files"] = (
-                f"{n} file(s){extra}: "
-                + ", ".join(tr.changes.files[:3])
-                + ("…" if n > 3 else "")
-            )
-
+        out["meta"], bits = _hc_meta_bits(tr)
+        out["verify"] = _hc_verify(tr)
+        out["files"] = _hc_files(tr)
         out["summary"] = (tr.summary or "")[:200]
         if tr.error and not tr.ok:
             out["error"] = str(tr.error)[:160]
-
-        # lifecycle timestamps (best-effort from existing JSON, no new storage)
-        meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-        result = row.get("result") if isinstance(row.get("result"), dict) else {}
-        created = meta.get("created_at") or row.get("created_at") or ""
-        started = meta.get("started_at") or result.get("started_at") or ""
-        finished = meta.get("finished_at") or result.get("finished_at") or ""
-        life_bits: list[str] = []
-        if created:
-            life_bits.append(f"created={str(created)[:19]}")
-        if started:
-            life_bits.append(f"start={str(started)[:19]}")
-        if finished:
-            life_bits.append(f"end={str(finished)[:19]}")
-        if tr.duration_sec and not any("s" in b for b in bits if b.endswith("s")):
-            life_bits.append(f"{tr.duration_sec:.1f}s")
-        if tr.attempts:
-            life_bits.append(f"attempts={tr.attempts}")
-        out["lifecycle"] = " · ".join(life_bits)[:180]
+        out["lifecycle"] = _hc_lifecycle(row, tr, bits)
         try:
             from core.error_ux import retry_status_from_row
             out["retry"] = retry_status_from_row(row)
@@ -670,6 +624,68 @@ def history_card_lines(row: dict[str, Any] | None) -> dict[str, str]:
     except Exception:
         pass
     return out
+
+
+def _hc_meta_bits(tr: TaskResult) -> tuple[str, list[str]]:
+    """Worker/skill/duration/attempts bits; bits reused by _hc_lifecycle."""
+    bits: list[str] = []
+    if tr.worker:
+        bits.append(tr.worker)
+    if tr.skill:
+        bits.append(f"skill:{tr.skill}")
+    if tr.duration_sec:
+        bits.append(f"{tr.duration_sec:.0f}s")
+    if tr.attempts and tr.attempts > 1:
+        bits.append(f"×{tr.attempts}")
+    return " · ".join(bits), bits
+
+
+def _hc_verify(tr: TaskResult) -> str:
+    """Verification line for the history card ("" when absent)."""
+    ver = tr.verification or {}
+    if ver.get("summary"):
+        return str(ver["summary"])[:120]
+    if "passed" in ver:
+        return (
+            "Verify PASS" if ver.get("passed") else f"Verify FAIL {ver.get('reason') or ''}"
+        )[:120]
+    return ""
+
+
+def _hc_files(tr: TaskResult) -> str:
+    """Changed-files line for the history card ("" when no files)."""
+    if not tr.changes.files:
+        return ""
+    n = len(tr.changes.files)
+    extra = ""
+    if tr.changes.insertions or tr.changes.deletions:
+        extra = f" +{tr.changes.insertions} -{tr.changes.deletions}"
+    return (
+        f"{n} file(s){extra}: "
+        + ", ".join(tr.changes.files[:3])
+        + ("…" if n > 3 else "")
+    )
+
+
+def _hc_lifecycle(row: dict[str, Any], tr: TaskResult, bits: list[str]) -> str:
+    """Lifecycle timestamps (best-effort from existing JSON, no new storage)."""
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    result = row.get("result") if isinstance(row.get("result"), dict) else {}
+    created = meta.get("created_at") or row.get("created_at") or ""
+    started = meta.get("started_at") or result.get("started_at") or ""
+    finished = meta.get("finished_at") or result.get("finished_at") or ""
+    life_bits: list[str] = []
+    if created:
+        life_bits.append(f"created={str(created)[:19]}")
+    if started:
+        life_bits.append(f"start={str(started)[:19]}")
+    if finished:
+        life_bits.append(f"end={str(finished)[:19]}")
+    if tr.duration_sec and not any("s" in b for b in bits if b.endswith("s")):
+        life_bits.append(f"{tr.duration_sec:.1f}s")
+    if tr.attempts:
+        life_bits.append(f"attempts={tr.attempts}")
+    return " · ".join(life_bits)[:180]
 
 
 def format_task_report(row: dict[str, Any] | None) -> str:
