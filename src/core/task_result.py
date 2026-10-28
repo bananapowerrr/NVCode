@@ -420,6 +420,27 @@ def _tr_verification(result: dict[str, Any], meta: dict[str, Any], ok: bool, sta
 
 def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
     """FC-04: collect files / insertions / deletions into a ChangeSet."""
+    files, fc = _tr_changes_files(result, meta)
+    git = result.get("git") if isinstance(result.get("git"), dict) else {}
+    cs = result.get("change_set") or meta.get("change_set") or git.get("change_set") or {}
+    if isinstance(cs, dict) and cs.get("files") and not files:
+        files = [str(x) for x in (cs.get("files") or [])]
+    insertions, deletions = _tr_changes_counts(result, git, cs, fc)
+    changes = ChangeSet(
+        files=files[:50],
+        insertions=int(insertions),
+        deletions=int(deletions),
+        patch_preview=str(
+            result.get("patch")
+            or (cs.get("patch_preview") if isinstance(cs, dict) else "")
+            or ""
+        )[:2000],
+    )
+    return changes
+
+
+def _tr_changes_files(result: dict[str, Any], meta: dict[str, Any]) -> tuple[list[str], Any]:
+    """FC-04: файлы из worker/skill полей + file_changes; возвращает (files, fc)."""
     # changes (FC-04: git / file_changes / worker fields)
     files: list[str] = []
     for key in ("files_changed", "files", "changed_files"):
@@ -439,10 +460,11 @@ def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
                 files.append(item)
     if not files and isinstance(fc, dict):
         files = list(fc.keys())
-    git = result.get("git") if isinstance(result.get("git"), dict) else {}
-    cs = result.get("change_set") or meta.get("change_set") or git.get("change_set") or {}
-    if isinstance(cs, dict) and cs.get("files") and not files:
-        files = [str(x) for x in (cs.get("files") or [])]
+    return files, fc
+
+
+def _tr_changes_counts(result: dict[str, Any], git: dict[str, Any], cs: Any, fc: Any) -> tuple[int, int]:
+    """FC-04: insertions/deletions из change_set/git + line-delta по file_changes."""
     insertions = int(
         (cs.get("insertions") if isinstance(cs, dict) else 0)
         or git.get("insertions")
@@ -466,17 +488,7 @@ def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
                 insertions += nl - ol
             elif ol > nl:
                 deletions += ol - nl
-    changes = ChangeSet(
-        files=files[:50],
-        insertions=int(insertions),
-        deletions=int(deletions),
-        patch_preview=str(
-            result.get("patch")
-            or (cs.get("patch_preview") if isinstance(cs, dict) else "")
-            or ""
-        )[:2000],
-    )
-    return changes
+    return insertions, deletions
 
 
 def _tr_timeline(meta: dict[str, Any], result: dict[str, Any], tid: str) -> list[str]:
