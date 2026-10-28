@@ -1,2 +1,4 @@
-src/core/rp_llm.py::RPLlmMixin._llm_finalize_side_effects
-src/core/rp_llm.py::RPLlmMixin._llm_try_one_worker
+# Frozen CRAP debt at --max 60 (ub-mode allowlist).
+# Remove an entry only after that function is decomposed under the threshold.
+src/core/rp_llm.py::RPLlmMixin._llm_success_finalize
+src/core/rp_llm.py::RPLlmMixin._stage_llm_pipeline
