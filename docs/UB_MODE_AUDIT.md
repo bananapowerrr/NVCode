@@ -9,6 +9,7 @@
 3. **Build the Lever**: `scripts/quality_gates.py` — офлайн AST-гейт без сторонних зависимостей: сложность per function, worst-case CRAP = comp²+comp, allowlist-рапчёт, дубликаты report-only. Тесты: `tests/test_quality_gates.py` (hermetic, tmp_path).
 4. **Декомпозиция топ-нарушителя CLI-слоя**: `dispatcher_main._diagnose` (comp 49) → 9 секционных хелперов `_diag_*` + оркестратор; `dispatcher_main.main` (comp 43) → 4 хелпера `_main_*` + оркестратор (коммит `66ccd8f`, дословный перенос, все счётчики try/except/SystemExit/print сохранены).
 5. **CI-проводка**: секция 5 в `scripts/ci_offline.sh` — advisory до первой локальной валидации базовой линии, затем fail=1.
+6. **Фикс TD-032** (коммит `bcb7f029`): в `_llm_success_diff_preview` `files_payload` теперь собирается ДО подсчёта `_diff_lines` — чтение вынесено в `_llm_read_diff_payload` (дословный перенос блока из `_llm_capture_diff_payload`, capture вызывает тот же хелпер). `assess_risk` впервые видит реальный размер диффа. Регресс-тесты: `tests/test_diff_preview_td032.py` (3 теста: реальные строки из payload, gitops=None -> 0 и без краша, фильтр по task.files); CI pytest-список дополнен. Оценки comp после фикса: preview 22, reader 19, capture 8.
 
 ## Топ-нарушители на момент аудита (comp, worst-case CRAP = comp²+comp при нулевом покрытии)
 
