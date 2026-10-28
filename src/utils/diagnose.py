@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
 """Offline smoke: python diagnose.py
 
 Не меняет runtime. Проверяет providers/workers/capacity/file-bus/CLI.
@@ -18,19 +18,8 @@ for _p in (SRC, ROOT):
 
 
 
-def diagnose_environment() -> list[str]:
-    """Extra env checks for first launch. Returns list of issue strings (empty = OK)."""
-    import json
-    import os
+def _env_check_python(issues: list[str]) -> None:
     import sys
-    import urllib.error
-    import urllib.request
-    from pathlib import Path
-
-    issues: list[str] = []
-    print("\n--- окружение ---")
-
-    # 1. Python version
     ver = sys.version_info
     py = f"{ver.major}.{ver.minor}.{ver.micro}"
     ok_py = (ver.major, ver.minor) >= (3, 10)
@@ -38,7 +27,12 @@ def diagnose_environment() -> list[str]:
     if not ok_py:
         issues.append(f"python {py} < 3.10")
 
-    # 2. Ollama API
+
+def _env_check_ollama(issues: list[str]) -> list[str]:
+    import json
+    import os
+    import urllib.request
+
     host = (os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
     models_found: list[str] = []
     try:
@@ -50,12 +44,15 @@ def diagnose_environment() -> list[str]:
     except Exception as exc:
         print(f"ollama API        : НЕДОСТУПЕН ({host}) — {type(exc).__name__}")
         issues.append(f"ollama API unavailable: {host}")
+    return models_found
 
-    # 3. Required models
+
+def _env_check_models(issues: list[str], models_found: list[str]) -> None:
+    import os
+
     need_coder = (os.getenv("CODER_MODEL") or "qwen2.5-coder:7b").replace("ollama_chat/", "")
     need_meta = (os.getenv("META_MODEL") or "qwen2.5:1.5b-instruct").replace("ollama_chat/", "")
     for label, need in (("coder", need_coder), ("meta", need_meta)):
-        # match by family prefix or full name; ollama tags are case-insensitive
         want = need.lower()
         family = want.split(":")[0]
         hit = any(
@@ -71,7 +68,10 @@ def diagnose_environment() -> list[str]:
     elif not models_found and "ollama API unavailable" not in " ".join(issues):
         print("  все модели      : (пусто)")
 
-    # 3b. PEV / context for 7B
+
+def _env_print_feature_toggles() -> None:
+    import os
+
     pev = os.getenv("AGENTBUS_PEV", "1")
     pev_cx = os.getenv("AGENTBUS_PEV_MIN_CX", "4")
     pev_llm = os.getenv("AGENTBUS_PEV_LLM", "0")
@@ -83,7 +83,8 @@ def diagnose_environment() -> list[str]:
     print(f"syntax guard      : {os.getenv('AGENTBUS_SYNTAX_GUARD', '1')}")
     print(f"file sentinel     : {os.getenv('AGENTBUS_FILE_SENTINEL', '1')}")
 
-    # 4. Feature flags
+
+def _env_check_feature_flags(issues: list[str]) -> None:
     try:
         from core.feature_flags import snapshot
         snap = snapshot()
@@ -99,7 +100,10 @@ def diagnose_environment() -> list[str]:
         print(f"feature_flags ERR : {exc}")
         issues.append(f"feature_flags: {exc}")
 
-    # 5. Channel directories
+
+def _env_check_channels(issues: list[str]) -> None:
+    from pathlib import Path
+
     try:
         from core.config import BUS_ROOT, CHANNELS
         missing: list[str] = []
@@ -119,7 +123,10 @@ def diagnose_environment() -> list[str]:
         print(f"channels ERR      : {exc}")
         issues.append(f"channels: {exc}")
 
-    # 6. Provider API keys (no values printed)
+
+def _env_check_provider_keys(issues: list[str]) -> None:
+    import os
+
     try:
         try:
             from providers import load_providers
@@ -131,7 +138,6 @@ def diagnose_environment() -> list[str]:
                 continue
             ke = getattr(p, "api_key_env", "") or ""
             has = bool(getattr(p, "api_key", "")) or (bool(ke) and bool(os.getenv(ke, "")))
-            # also treat is_usable if no key concept
             if not has and not (hasattr(p, "is_usable") and p.is_usable() and not ke):
                 if ke or getattr(p, "billing", "") in ("free", "paid", "hybrid"):
                     if not has:
@@ -141,7 +147,8 @@ def diagnose_environment() -> list[str]:
     except Exception as exp:
         print(f"keys ERR          : {exp}")
 
-    # 7. Optional UI deps
+
+def _env_check_optional_deps(issues: list[str]) -> None:
     for mod, purpose in (("customtkinter", "UI"), ("pystray", "трей"), ("yaml", "config")):
         try:
             __import__(mod if mod != "yaml" else "yaml")
@@ -152,10 +159,10 @@ def diagnose_environment() -> list[str]:
             if mod == "yaml":
                 issues.append("missing PyYAML")
 
-    # 8. Worker readiness: OK / NO_KEY / disabled.
-    # Роутер сам по себе не знает про отсутствующие ключи: воркер без ключа
-    # остаётся "доступным" и падает уже в момент запуска, забирая слот и
-    # время (2-3с на облако в c-long-040046). Здесь показываем это заранее.
+
+def _env_check_workers(issues: list[str]) -> None:
+    import os
+
     try:
         from core.workers import load_workers
         prov_by_id = {}
@@ -169,8 +176,6 @@ def diagnose_environment() -> list[str]:
         except Exception as exp:
             print(f"worker keys ERR : {exp}")
         print("  --- workers ---")
-        # Платный шлюз: показываем цену каждого воркера, иначе политика
-        # «только бесплатные» невидима (c-long-040046).
         try:
             from core.config import ALLOW_PAID as _ALLOW_PAID
             from core.paid_gate import is_paid_worker
@@ -219,11 +224,25 @@ def diagnose_environment() -> list[str]:
               f"({', '.join(_paid_names) or '—'}), бесплатных {len(_free_names)} "
               f"({', '.join(_free_names) or '—'})")
         if _paid_names and not _ALLOW_PAID:
-            print("  -> платные воркеры исключены роутером; задачи идут только на бесплатные")
+            print("  → платные воркеры отсечены роутером (ALLOW_PAID=0)")
     except Exception as exc:
-        print(f"workers ERR     : {exc}")
+        print(f"workers ERR       : {exc}")
         issues.append(f"workers: {exc}")
 
+
+def diagnose_environment() -> list[str]:
+    """Extra env checks for first launch. Returns list of issue strings (empty = OK)."""
+    issues: list[str] = []
+    print("\n--- окружение ---")
+    _env_check_python(issues)
+    models_found = _env_check_ollama(issues)
+    _env_check_models(issues, models_found)
+    _env_print_feature_toggles()
+    _env_check_feature_flags(issues)
+    _env_check_channels(issues)
+    _env_check_provider_keys(issues)
+    _env_check_optional_deps(issues)
+    _env_check_workers(issues)
     return issues
 
 
@@ -298,7 +317,6 @@ def main() -> int:
         found = which(path) or which(name)
         print(f"CLI {name:10}: {found or 'NOT FOUND'}")
 
-    # Feature flags
     try:
         from core.feature_flags import snapshot, config_path
         snap = snapshot()
@@ -311,7 +329,6 @@ def main() -> int:
         print(f"features ERR   : {e}")
         errors += 1
 
-    # Product contracts (offline, no Ollama)
     try:
         print("--- product contracts ---")
         from core.runtime_decision import decide_terminal, evidence_snapshot
@@ -336,14 +353,12 @@ def main() -> int:
         print(f"environment ERR: {e}")
         errors += 1
 
-    # Day-16: explainable worker route (does not change select_executor)
     try:
         from core.worker_route_surface import format_route_for_doctor
         print("--- worker route (sample) ---")
         print(format_route_for_doctor())
     except Exception as e:
         print(f"worker route   : ERR {e}")
-        # non-fatal for doctor exit code
 
     print("=== end ===")
     print("READY" if errors == 0 else f"ISSUES: {errors}")
