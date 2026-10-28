@@ -857,16 +857,37 @@ def diagnose() -> int:
         code = 1
 
     # --- секции, специфичные для runtime ---
+    _diag_solution_cache()
+    _diag_lessons()
+    _diag_plugins()
+    _diag_model_profiles()
+    _diag_local_stack()
+    _diag_extensions()
+    print("=== end diagnose ===")
+    _diag_status_board()
+    return code
+
+
+def _diag_solution_cache() -> None:
+    """Кэш решений: solution_cache stats."""
     try:
         from intelligence.solution_cache import GLOBAL_CACHE
         print(f"solution_cache    : {GLOBAL_CACHE.stats()}")
     except Exception as e:
         print(f"solution_cache ERR: {e}")
+
+
+def _diag_lessons() -> None:
+    """Уроки: lesson_learner stats."""
     try:
         from intelligence.lesson_learner import GLOBAL_LEARNER
         print(f"lessons           : {GLOBAL_LEARNER.stats()}")
     except Exception as e:
         print(f"lessons ERR       : {e}")
+
+
+def _diag_plugins() -> None:
+    """Плагины + feature-пресеты."""
     try:
         from core.plugin_registry import status_dict
         from core.feature_flags import list_presets
@@ -882,6 +903,10 @@ def diagnose() -> int:
         print(f"feature presets   : {', '.join(p['name'] for p in presets) or '(none)'}")
     except Exception as e:
         print(f"plugins ERR       : {e}")
+
+
+def _diag_model_profiles() -> None:
+    """Профили моделей воркеров."""
     try:
         from core.model_profiles import load_profiles, profile_for_worker
         from core.workers import load_workers
@@ -892,6 +917,10 @@ def diagnose() -> int:
             print(f"  {w.name:22} → {p.name} backend={p.backend} ctx={p.context_window} rag={p.rag_strictness}")
     except Exception as e:
         print(f"model profiles ERR: {e}")
+
+
+def _diag_local_stack() -> None:
+    """Локальные рантаймы и harnesses."""
     try:
         from core.harness_registry import discover_local_stack, recommend_stack
         snap = discover_local_stack()
@@ -901,6 +930,10 @@ def diagnose() -> int:
             print(f"  → {tip}")
     except Exception as e:
         print(f"adapters ERR      : {e}")
+
+
+def _diag_extensions() -> None:
+    """Реестр расширений + skill-метрики."""
     try:
         from core.plugin_registry import discover_plugins, load_extension_manifest, PLUGIN_MODULES
         load_extension_manifest()
@@ -920,13 +953,15 @@ def diagnose() -> int:
             pass
     except Exception as e:
         print(f"extensions ERR    : {e}")
-    print("=== end diagnose ===")
+
+
+def _diag_status_board() -> None:
+    """Финальный статус-борд diagnose."""
     try:
         from utils.status_board import print_board
         print_board()
     except Exception as e:
         print(f"status_board ERR  : {e}")
-    return code
 
 
 def main(argv: list[str] | None = None) -> None:
