@@ -42,11 +42,24 @@ fi
 echo
 
 echo "== 4. targeted pytest =="
-if python -m pytest -q   tests/test_run_log.py   tests/test_doctor_verdict.py   tests/test_format_task_report.py   tests/test_history_report_wire.py   tests/test_p0_fail_closed.py   tests/test_p1_loader_queue.py   tests/test_analyze_reconcile.py   tests/test_plan_done_ui_message.py   tests/test_status_board_text.py   --tb=line; then
+if python -m pytest -q   tests/test_run_log.py   tests/test_doctor_verdict.py   tests/test_format_task_report.py   tests/test_history_report_wire.py   tests/test_p0_fail_closed.py   tests/test_p1_loader_queue.py   tests/test_analyze_reconcile.py   tests/test_plan_done_ui_message.py   tests/test_status_board_text.py   tests/test_quality_gates.py   --tb=line; then
   echo "  pytest OK"
 else
   echo "  pytest FAIL"
   fail=1
+fi
+echo
+
+echo "== 5. quality gates (ub-mode ratchet, advisory) =="
+# Advisory until the first local run validates the baseline (max comp in repo = 57;
+# AST counter may differ slightly). After a green run either decompose offenders or
+# freeze them: python scripts/quality_gates.py --update-allowlist --max 60
+# then re-enable the fail=1 line below.
+if python scripts/quality_gates.py --gate --max 60; then
+  echo "  quality gates OK"
+else
+  echo "  quality gates ADVISORY: comp > 60 found (list above) — decompose or allowlist, then re-enable fail=1"
+  # fail=1
 fi
 echo
 
