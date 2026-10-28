@@ -816,16 +816,14 @@ class RuntimeOps:
         return None
 
     def _active_channels(self) -> list[str]:
-        """Configured CHANNELS plus desktop plus on-disk isolated sub-agent channels."""
-        found: list[str] = []
-        seen: set[str] = set()
-        # desktop = primary PC chat channel: always polled, even when
-        # AGENTBUS_CHANNELS does not list it, so deferred desktop work is
-        # claimable without the phone file-bus.
-        for ch in list(CHANNELS) + ["desktop"]:
-            if ch and ch not in seen:
-                found.append(ch)
-                seen.add(ch)
+        """Desktop-only intake (TD-021).
+
+        Phone file-bus channels (gpt/grok/gemini/…) are no longer polled.
+        Tasks enter only via IDE/chat (desktop queue + Protocol). Isolated
+        sub-agent dirs under desktop (`desktop__sub_*`) remain claimable.
+        """
+        found: list[str] = ["desktop"]
+        seen: set[str] = {"desktop"}
         try:
             bus_root = Path(getattr(self.bus, "root", None) or "")
             root = bus_root / "channels" if bus_root.is_dir() else Path()
@@ -839,15 +837,12 @@ class RuntimeOps:
                     name = d.name
                     if name in seen:
                         continue
-                    # isolated children: gpt__sub_xxx or any configured prefix
-                    if "__sub_" in name:
+                    # only desktop-scoped sub-agents, not legacy phone channels
+                    if name.startswith("desktop__sub_") or (
+                        name.startswith("desktop") and "__sub_" in name
+                    ):
                         found.append(name)
                         seen.add(name)
-                        continue
-                    # also pick up channels that have pending work even if not in env list
-                    if (d / "incoming").is_dir() or (d / "processing").is_dir():
-                        # only auto-add __sub_ to avoid scanning random dirs; base channels from env
-                        pass
         except Exception:
             pass
         return found
