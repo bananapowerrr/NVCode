@@ -10,18 +10,19 @@
 4. **Декомпозиция топ-нарушителя CLI-слоя**: `dispatcher_main._diagnose` (comp 49) → 9 секционных хелперов `_diag_*` + оркестратор; `dispatcher_main.main` (comp 43) → 4 хелпера `_main_*` + оркестратор (коммит `66ccd8f`, дословный перенос, все счётчики try/except/SystemExit/print сохранены).
 5. **CI-проводка**: секция 5 в `scripts/ci_offline.sh` — advisory до первой локальной валидации базовой линии, затем fail=1.
 6. **Фикс TD-032** (коммит `bcb7f029`): в `_llm_success_diff_preview` `files_payload` теперь собирается ДО подсчёта `_diff_lines` — чтение вынесено в `_llm_read_diff_payload` (дословный перенос блока из `_llm_capture_diff_payload`, capture вызывает тот же хелпер). `assess_risk` впервые видит реальный размер диффа. Регресс-тесты: `tests/test_diff_preview_td032.py` (3 теста: реальные строки из payload, gitops=None -> 0 и без краша, фильтр по task.files); CI pytest-список дополнен. Оценки comp после фикса: preview 22, reader 19, capture 8.
+7. **Рэтчет TD-031 — этап 40**: декомпозиция `runtime.process` (comp ~56 → ~14, `82f76c1` — 5 хелперов `_process_*`), `runtime.run_forever` (~48 → ~9, `81ab4be` — 7 хелперов `_startup_recover`/`_loop_*`), `task_result._tr_changes` (~44 → ~10, `17db516` — `_tr_changes_files`/`_tr_changes_counts`). Дословные переносы, структурный валидатор, comp-дельты. Ревизия TD-014 вскрыла потерянные `return` в шести `_tr_*`-хелперах (TD-033) — восстановлены (`5ea05ebe`) + регресс-тесты `tests/test_task_result_returns.py`. Порог гейта в CI: `--max 60` → `--max 40` (следующий этап — 25).
 
 ## Топ-нарушители на момент аудита (comp, worst-case CRAP = comp²+comp при нулевом покрытии)
 
 | Функция | comp | CRAP worst | Статус |
 |---|---|---|---|
-| `src/core/runtime.py::process` | 57 | 3306 | открыт (TD-031, приоритет 1) |
+| `src/core/runtime.py::process` | 57 | 3306 | **разбита** → 5 хелперов (`82f76c1`) |
 | `src/core/dispatcher_main.py::_diagnose` | 49 | 2499 | **разбита** → 9 хелперов (`66ccd8f`) |
-| `src/core/runtime.py::run_forever` | 48 | 2352 | открыт (приоритет 2) |
-| `src/core/task_result.py::_tr_changes` | 44 | 1980 | открыт (приоритет 3) |
+| `src/core/runtime.py::run_forever` | 48 | 2352 | **разбита** → 7 хелперов (`81ab4be`) |
+| `src/core/task_result.py::_tr_changes` | 44 | 1980 | **разбита** → 2 хелпера (`17db516`) |
 | `src/core/dispatcher_main.py::main` | 43 | 1892 | **разбита** → 4 хелпера (`66ccd8f`) |
 | `src/core/task_result.py::build_task_result` | 43 | 1892 | уже декомпозирована (TD-014, `6a9cebd`) |
-| `src/core/rp_cache_skills.py::_try_skill` | 40 | 1640 | открыт (приоритет 4) |
+| `src/core/rp_cache_skills.py::_try_skill` | 40 | 1640 | проходит на `--max 40` (цель 25 — следующий этап) |
 | `src/core/task_result.py::history_card_lines` | 39 | 1596 | открыт (приоритет 5) |
 | `src/core/runtime.py::diagnose` | 37 | 1406 | открыт |
 | `src/core/rp_llm.py::_llm_workers_exhausted` | 36 | 1332 | перенос из TD-012 (не новый долг) |
@@ -41,15 +42,15 @@
 
 ```bash
 python scripts/quality_gates.py                          # отчёт: топ по сложности + дубли
-python scripts/quality_gates.py --gate --max 60          # фейлит НОВЫЙ долг вне allowlist
-python scripts/quality_gates.py --update-allowlist --max 60   # заморозить существующий долг
+python scripts/quality_gates.py --gate --max 40          # фейлит НОВЫЙ долг вне allowlist
+python scripts/quality_gates.py --update-allowlist --max 40   # заморозить существующий долг
 ```
 
 ## План рапчёта
 
-`--max 60 → 40 → 25 → 12`. При полном тестовом покрытии CRAP = comp, поэтому цель «CRAP < 10» ≈ comp ≤ 9 (порог 12 с запасом на review-ветку). Allowlist замораживает существующий долг — новый долг фейлит гейт сразу, независимо от порога.
+`--max 40` (этап 40 достигнут 2026-10-28) `→ 25 → 12`. При полном тестовом покрытии CRAP = comp, поэтому цель «CRAP < 10» ≈ comp ≤ 9 (порог 12 с запасом на review-ветку). Allowlist замораживает существующий долг — новый долг фейлит гейт сразу, независимо от порога.
 
 ## Оговорки
 
-- Гейт и тесты написаны офлайн; в среде выполнения нет Python-интерпретатора, поэтому локальный прогон не выполнялся. Перед включением `fail=1` в CI: `python -m pytest -q tests/test_quality_gates.py` и `python scripts/quality_gates.py --gate --max 60`; при нарушителях >60 — декомпозировать или `--update-allowlist --max 60`, затем раскомментировать `fail=1` в `scripts/ci_offline.sh`.
+- Гейт и тесты написаны офлайн; в среде выполнения нет Python-интерпретатора, поэтому локальный прогон не выполнялся. Перед включением `fail=1` в CI: `python -m pytest -q tests/` и `python scripts/quality_gates.py --gate --max 40`; при нарушителях >40 — декомпозировать или `--update-allowlist --max 40`, затем раскомментировать `fail=1` в `scripts/ci_offline.sh`.
 - Связная запись реестра: TD-031 в `docs/TECHNICAL_DEBT_REGISTRY.md`.
