@@ -189,6 +189,31 @@ def _changed_paths(rt, *, project, task) -> list[str]:
         return []
 
 
+def _llm_worker_files_for_task(ctx, task, abs_files) -> list:
+    """Воркеру передаём ТОЛЬКО целевые файлы задачи (дословный перенос
+    из _stage_llm_pipeline: u-utf8-041524, cmp-044939)."""
+    # Воркеру передаём ТОЛЬКО целевые файлы задачи.
+    # Раньше сюда уходил abs_files на весь проект, и aider
+    # пытался прочитать файлы в cp1251: aider/io.py:475 на
+    # UnicodeError печатает "Use --encoding to set the unicode
+    # encoding." и возвращается молча. Таких файлов было
+    # несколько, n-gram-guard видел 4 одинаковые строки подряд
+    # и объявлял LOOP_ERROR — модель при этом не зацикливалась
+    # (u-utf8-041524). --encoding тут не помогает: флаг задаёт
+    # кодек, но не errors.
+    # ctx, а не self.context: в рантайме self.context равен None
+    # и обращение к self.context.root роняло задачу с
+    # AttributeError: 'NoneType' object has no attribute 'root'
+    # (cmp-044939) ДО запуска воркера.
+    _root = Path(str(getattr(ctx, "root", None) or "."))
+    _names = {str(t).replace("\\", "/").split("/")[-1]
+              for t in (getattr(task, "files", None) or [])}
+    worker_files = [f for f in (abs_files or [])
+                    if Path(str(f)).name in _names] or \
+        [str(f) for f in _names if (_root / f).is_file()]
+    return worker_files
+
+
 class RPLlmMixin:
 
     def _llm_policy_offline_state(self, task) -> tuple:
@@ -463,6 +488,146 @@ class RPLlmMixin:
                 return False, f"{detail_prefix}: {command}\n{check.output[-4000:]}"
         return True, f"{detail_prefix}: {len(commands)} команда(ы) пройдены"
 
+    def _llm_log_executor_skips(self, req, worker) -> None:
+        """Лог причин отсечки select_executor (aider_local в c-long-040046)."""
+        # Причины отсечки воркеров: без этого явный `executor` мог
+        # молча не выполниться (aider_local в c-long-040046).
+        try:
+            from core.router import LAST_SKIPS
+            if LAST_SKIPS:
+                self.log.write(
+                    f"select_executor: skips={LAST_SKIPS} requested={req or '-'}")
+            if req and worker is not None and getattr(worker, 'name', '') != req:
+                self.log.write(
+                    f"select_executor: REQUESTED {req} unavailable "
+                    f"({LAST_SKIPS.get(req, 'filtered')}) -> fallback {worker.name}")
+        except Exception:
+            pass
+
+    def _llm_language_repair_pass(self, worker, task, ctx, worker_message,
+                                  exec_timeout, abs_files, result):
+        """Language self-correction: один доп. проход при дрейфе в англ. прозе."""
+        # Language self-correction: one extra pass if prose drifted to English
+        try:
+            from safety.language_guard import needs_language_repair, language_repair_message
+            meta_lr = task.metadata if isinstance(task.metadata, dict) else {}
+            already = bool(meta_lr.get("_language_repaired"))
+            sample = (result.stdout or "")[-4000:]
+            if result.ok and sample and not already and needs_language_repair(sample):
+                meta_lr["_language_repaired"] = True
+                task.metadata = meta_lr
+                fix = language_repair_message()
+                nl = chr(10)
+                repair_msg = (
+                    worker_message.rstrip()
+                    + nl + nl
+                    + fix
+                    + nl + nl
+                    + "Previous output (rewrite prose only):"
+                    + nl
+                    + sample[:2000]
+                )
+                try:
+                    self._emit(
+                        "LANGUAGE_REPAIR",
+                        "english drift — one self-correction pass",
+                        task_id=task.id,
+                        worker=worker.name,
+                    )
+                except Exception:
+                    pass
+                result = self._exec_worker(
+                    worker, str(ctx.root), repair_msg, exec_timeout, abs_files,
+                    task_id=task.id,
+                )
+        except Exception:
+            pass
+        return result
+
+    def _llm_defer_no_changes(self, task, worker, reason) -> str:
+        """Fail-closed DEFERRED: DONE без изменений и верификации недопустим
+        (e2e-031910). Мета-модель 1.5B режет задачу на атомарные подзадачи."""
+        try:
+            self.log.write(
+                f"{worker.name}: {reason} — DONE недопустим, "
+                f"task={task.id} (файлы не изменены)"
+            )
+        except Exception:
+            pass
+        # 7B не справился — по замыслу подключаем локальную
+        # 1.5B мета-модель: она разбивает задачу на атомарные
+        # подзадачи. Родитель честно уходит в DEFERRED, дети
+        # падают в очередь как PENDING (fail-closed сохранён).
+        meta_dec: dict[str, Any] = {}
+        try:
+            from skills.meta_decompose import try_decompose_failed_task
+            meta_dec = try_decompose_failed_task(
+                self, task, failure_reason=reason,
+            ) or {}
+        except Exception as decomp_err:
+            try:
+                self.log.write(
+                    f"meta_decompose failed (defer без декомпозиции): {decomp_err}"
+                )
+            except Exception:
+                pass
+            meta_dec = {}
+        return self.finish_task(
+            task, "DEFERRED",
+            {"error": reason, "worker": worker.name,
+             "attempts": task.attempts,
+             "changed_files": [],
+             "decomposition_required": True,
+             **meta_dec},
+            error=reason,
+        )
+
+    def _llm_success_ladder(self, task, worker, result, complexity, task_type) -> None:
+        """Verify-ladder reset, метрики, health/ranker success-обучение."""
+        try:
+            self._reset_verify_fails(task)
+        except Exception:
+            pass
+        try:
+            from utils.metrics import GLOBAL_METRICS
+            meta_v = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
+            lvl = int(meta_v.get("verify_ladder") or meta_v.get("verify_max_level") or 0)
+            GLOBAL_METRICS.record_verify_ladder(success=True, level=lvl)
+        except Exception:
+            pass
+        self.health.success(worker.name, latency=result.latency)
+        try:
+            self.ranker.learn(worker.harness, worker.provider, worker.model,
+                              ok=True, latency=result.latency,
+                              complexity=complexity, task_type=task_type)
+        except Exception:
+            pass
+
+    def _llm_record_attempt_failure(self, task, worker, result, complexity,
+                                    task_type, attempt_messages) -> None:
+        """Классификация и учёт провала попытки: metrics/health/events/lessons."""
+        error = result.stderr or result.stdout or "ошибка исполнителя"
+        err_type, evt, fail_status = self._llm_classify_exec_error(result)
+        self._llm_record_worker_failure(
+            worker, task, result, error, err_type, fail_status,
+            complexity=complexity, task_type=task_type,
+        )
+        self._emit(evt, error[-300:], task_id=task.id, worker=worker.name,
+                   executor=worker.harness, provider=worker.provider, model=worker.model,
+                   payload={"timed_out": result.timed_out,
+                            "loop_error": bool(getattr(result, "loop_error", False)),
+                            "attempt": task.attempts, "task_type": task_type})
+        dec = decide_failure(error, task.attempts, MAX_ATTEMPTS, result.timed_out)
+        if dec.fix_prompt:
+            for w in self.workers:
+                if w.name != worker.name:
+                    attempt_messages[w.name] = dec.fix_prompt
+        self.log.task(task.channel, task.id, worker.name,
+                      f"ОШИБКА[{dec.category}]: {error[-200:]}")
+        self._record_lesson(task, error, worker=worker.name, category=dec.category)
+        self._record_semantic(task, success=False, worker=worker.name, solution=error[-400:])
+
+
     def _stage_llm_pipeline(
         self, raw: dict, task, proj, ctx, tests, gitops, cbuilder, task_type: str
     ) -> str | None:
@@ -496,19 +661,7 @@ class RPLlmMixin:
             req = task.executor if not tried else ""
             worker = select_executor(pool, self.health, raw, requested=req,
                                      ranker=self.ranker, capacity=self.capacity)
-            # Причины отсечки воркеров: без этого явный `executor` мог
-            # молча не выполниться (aider_local в c-long-040046).
-            try:
-                from core.router import LAST_SKIPS
-                if LAST_SKIPS:
-                    self.log.write(
-                        f"select_executor: skips={LAST_SKIPS} requested={req or '-'}")
-                if req and worker is not None and getattr(worker, 'name', '') != req:
-                    self.log.write(
-                        f"select_executor: REQUESTED {req} unavailable "
-                        f"({LAST_SKIPS.get(req, 'filtered')}) -> fallback {worker.name}")
-            except Exception:
-                pass
+            self._llm_log_executor_skips(req, worker)
             if worker is None:
                 if req:
                     try:
@@ -574,25 +727,7 @@ class RPLlmMixin:
                     task_baseline = _task_baseline(str(ctx.root), task)
                 except Exception:
                     task_baseline = {}
-                # Воркеру передаём ТОЛЬКО целевые файлы задачи.
-                # Раньше сюда уходил abs_files на весь проект, и aider
-                # пытался прочитать файлы в cp1251: aider/io.py:475 на
-                # UnicodeError печатает "Use --encoding to set the unicode
-                # encoding." и возвращается молча. Таких файлов было
-                # несколько, n-gram-guard видел 4 одинаковые строки подряд
-                # и объявлял LOOP_ERROR — модель при этом не зацикливалась
-                # (u-utf8-041524). --encoding тут не помогает: флаг задаёт
-                # кодек, но не errors.
-                # ctx, а не self.context: в рантайме self.context равен None
-                # и обращение к self.context.root роняло задачу с
-                # AttributeError: 'NoneType' object has no attribute 'root'
-                # (cmp-044939) ДО запуска воркера.
-                _root = Path(str(getattr(ctx, "root", None) or "."))
-                _names = {str(t).replace("\\", "/").split("/")[-1]
-                          for t in (getattr(task, "files", None) or [])}
-                worker_files = [f for f in (abs_files or [])
-                                if Path(str(f)).name in _names] or \
-                    [str(f) for f in _names if (_root / f).is_file()]
+                worker_files = _llm_worker_files_for_task(ctx, task, abs_files)
                 try:
                     self.log.write(
                         f"worker_files: task={task.id} passing {len(worker_files)} "
@@ -616,41 +751,8 @@ class RPLlmMixin:
                 except Exception:
                     pass
 
-                # Language self-correction: one extra pass if prose drifted to English
-                try:
-                    from safety.language_guard import needs_language_repair, language_repair_message
-                    meta_lr = task.metadata if isinstance(task.metadata, dict) else {}
-                    already = bool(meta_lr.get("_language_repaired"))
-                    sample = (result.stdout or "")[-4000:]
-                    if result.ok and sample and not already and needs_language_repair(sample):
-                        meta_lr["_language_repaired"] = True
-                        task.metadata = meta_lr
-                        fix = language_repair_message()
-                        nl = chr(10)
-                        repair_msg = (
-                            worker_message.rstrip()
-                            + nl + nl
-                            + fix
-                            + nl + nl
-                            + "Previous output (rewrite prose only):"
-                            + nl
-                            + sample[:2000]
-                        )
-                        try:
-                            self._emit(
-                                "LANGUAGE_REPAIR",
-                                "english drift — one self-correction pass",
-                                task_id=task.id,
-                                worker=worker.name,
-                            )
-                        except Exception:
-                            pass
-                        result = self._exec_worker(
-                            worker, str(ctx.root), repair_msg, exec_timeout, abs_files,
-                            task_id=task.id,
-                        )
-                except Exception:
-                    pass
+                result = self._llm_language_repair_pass(
+                    worker, task, ctx, worker_message, exec_timeout, abs_files, result)
                 plan = (gitops.plan_commit(before_snapshot, task.files)
                         if (gitops and before_snapshot is not None) else None)
                 if result.ok:
@@ -677,58 +779,8 @@ class RPLlmMixin:
                     verified_ok = _explicit_verified(result)
                     if not changed and not verified_ok:
                         reason = "no_changes_and_no_verification"
-                        try:
-                            self.log.write(
-                                f"{worker.name}: {reason} — DONE недопустим, "
-                                f"task={task.id} (файлы не изменены)"
-                            )
-                        except Exception:
-                            pass
-                        # 7B не справился — по замыслу подключаем локальную
-                        # 1.5B мета-модель: она разбивает задачу на атомарные
-                        # подзадачи. Родитель честно уходит в DEFERRED, дети
-                        # падают в очередь как PENDING (fail-closed сохранён).
-                        meta_dec: dict[str, Any] = {}
-                        try:
-                            from skills.meta_decompose import try_decompose_failed_task
-                            meta_dec = try_decompose_failed_task(
-                                self, task, failure_reason=reason,
-                            ) or {}
-                        except Exception as decomp_err:
-                            try:
-                                self.log.write(
-                                    f"meta_decompose failed (defer без декомпозиции): {decomp_err}"
-                                )
-                            except Exception:
-                                pass
-                            meta_dec = {}
-                        return self.finish_task(
-                            task, "DEFERRED",
-                            {"error": reason, "worker": worker.name,
-                             "attempts": task.attempts,
-                             "changed_files": [],
-                             "decomposition_required": True,
-                             **meta_dec},
-                            error=reason,
-                        )
-                    try:
-                        self._reset_verify_fails(task)
-                    except Exception:
-                        pass
-                    try:
-                        from utils.metrics import GLOBAL_METRICS
-                        meta_v = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
-                        lvl = int(meta_v.get("verify_ladder") or meta_v.get("verify_max_level") or 0)
-                        GLOBAL_METRICS.record_verify_ladder(success=True, level=lvl)
-                    except Exception:
-                        pass
-                    self.health.success(worker.name, latency=result.latency)
-                    try:
-                        self.ranker.learn(worker.harness, worker.provider, worker.model,
-                                          ok=True, latency=result.latency,
-                                          complexity=complexity, task_type=task_type)
-                    except Exception:
-                        pass
+                        return self._llm_defer_no_changes(task, worker, reason)
+                    self._llm_success_ladder(task, worker, result, complexity, task_type)
                     # Проблема 1: harness вернул exit 0, но verify-команды
                     # из задачи на success-пути НЕ выполнялись. Из-за этого
                     # _save() вычислял verified=False, хотя файл мог быть
@@ -764,41 +816,15 @@ class RPLlmMixin:
             finally:
                 self.health.end_task(worker.name)
 
-            error = result.stderr or result.stdout or "ошибка исполнителя"
-            err_type, evt, fail_status = self._llm_classify_exec_error(result)
-            self._llm_record_worker_failure(
-                worker, task, result, error, err_type, fail_status,
-                complexity=complexity, task_type=task_type,
-            )
-            self._emit(evt, error[-300:], task_id=task.id, worker=worker.name,
-                       executor=worker.harness, provider=worker.provider, model=worker.model,
-                       payload={"timed_out": result.timed_out,
-                                "loop_error": bool(getattr(result, "loop_error", False)),
-                                "attempt": task.attempts, "task_type": task_type})
-            dec = decide_failure(error, task.attempts, MAX_ATTEMPTS, result.timed_out)
-            if dec.fix_prompt:
-                for w in self.workers:
-                    if w.name != worker.name:
-                        attempt_messages[w.name] = dec.fix_prompt
-            self.log.task(task.channel, task.id, worker.name,
-                          f"ОШИБКА[{dec.category}]: {error[-200:]}")
-            self._record_lesson(task, error, worker=worker.name, category=dec.category)
-            self._record_semantic(task, success=False, worker=worker.name, solution=error[-400:])
-
+            self._llm_record_attempt_failure(task, worker, result, complexity, task_type, attempt_messages)
         return self._llm_workers_exhausted(
             task=task, gitops=gitops, before_snapshot=before_snapshot,
             result=result, attempted=attempted,
         )
 
-    def _llm_success_finalize(
-        self, task, proj, ctx, worker, result, gitops, before_snapshot,
-        commit_sha: str, verify_ok: bool, verify_detail: str, changed: list,
-    ) -> str:
-        """Success-путь _stage_llm_pipeline (TD-012): тело перенесено дословно.
-
-        Финализация DONE: queue.finish, bus.move, _save, отчёты/метрики/кэш,
-        semantic-память, write_progress, git-cleanup. Возвращает "DONE".
-        """
+    def _llm_success_queue_save(self, task, worker, result, before_snapshot,
+                                 commit_sha, verify_ok, verify_detail, changed) -> None:
+        """queue.finish, bus.move, GitRun, _save, отчёт DONE."""
         try:
             self.queue.finish(task.id, self.worker_id, "DONE",
                               result.stdout or commit_sha or "", "")
@@ -818,122 +844,143 @@ class RPLlmMixin:
                                   "verification": {"ok": bool(verify_ok),
                                                    "detail": verify_detail}})
         self.report.record("DONE", worker.name, task.attempts)
+
+    def _llm_success_explain_cost(self, task, worker, result, commit_sha) -> None:
+        """explain_and_learn + cost/pipeline events.
+
+        Без внешнего try-блока: исключение уходит в вызывающий
+        _llm_success_finalize (семантика исходного общего try сохранена).
+        """
+        self._explain_and_learn("worker", task, worker=worker.name, success=True,
+            complexity=int(getattr(task, "complexity", 3) or 3))
         try:
-            self._explain_and_learn("worker", task, worker=worker.name, success=True,
-                complexity=int(getattr(task, "complexity", 3) or 3))
-            try:
-                from utils.cost_tracker import GLOBAL_COST
-                from utils.pipeline_events import task_done as _pev_done, diff_policy as _pev_diff
-                toks = int(getattr(result, "tokens", 0) or 0)
-                if not toks:
-                    toks = max(100, len(str(getattr(task, "message", "") or "")) // 3)
-                GLOBAL_COST.record(
-                    str(task.id),
-                    worker=str(worker.name or ""),
-                    provider=str(getattr(worker, "provider", "") or ""),
-                    model=str(getattr(worker, "model", "") or ""),
-                    tokens_total=toks,
-                )
-                _pev_done(
-                    str(task.id),
-                    str(worker.name or ""),
-                    duration=float(getattr(result, "latency", 0) or 0),
-                    commit=commit_sha or "",
-                )
-            except Exception:
-                pass
-            try:
-                if not is_enabled("diff_preview"):
-                    raise ImportError("diff_preview disabled")
-                from safety.diff_engine import queue_from_task_result, queue_pending
-                from safety.diff_policy import assess_risk
-                try:
-                    _diff_lines = 0
-                    for _fp in (files_payload or {}).values():
-                        if isinstance(_fp, dict):
-                            _diff_lines += str(_fp.get("new") or "").count("\n")
-                        else:
-                            _diff_lines += str(_fp or "").count("\n")
-                except Exception:
-                    _diff_lines = 0
-                _decision = assess_risk(
-                    files=list(getattr(task, "files", None) or []),
-                    complexity=int(getattr(task, "complexity", 3) or 3),
-                    diff_lines=_diff_lines,
-                    message=str(getattr(task, "message", "") or ""),
-                )
-                try:
-                    meta_d = dict(getattr(task, "metadata", None) or {})
-                    meta_d["diff_policy"] = _decision.to_dict()
-                    task.metadata = meta_d
-                    try:
-                        from utils.pipeline_events import diff_policy as _pev_diff
-                        _pev_diff(str(task.id), _decision.to_dict())
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-                if _decision.action == "require_approval":
-                    # still queue for UI — never silent auto-apply on HIGH
-                    pass
-                payload = getattr(task, "raw", None) or {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                proot = getattr(proj, "root", None) if proj else None
-                queued = queue_from_task_result(payload, project_root=proot)
-                if not queued and gitops and before_snapshot is not None:
-                    try:
-                        changed = []
-                        if hasattr(gitops, "changed_files_since"):
-                            changed = gitops.changed_files_since(before_snapshot) or []
-                        if not changed and hasattr(gitops, "diff_names"):
-                            changed = gitops.diff_names() or []
-                        # Restrict to task.files if non-empty to reduce parallel bleed
-                        tf = [str(f).replace("\\", "/") for f in (task.files or [])]
-                        if tf:
-                            changed = [c for c in changed if str(c).replace("\\", "/") in tf
-                                       or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
-                        files_payload = {}
-                        head_sha = ""
-                        try:
-                            head_sha = getattr(before_snapshot, "head", "") or ""
-                        except Exception:
-                            head_sha = ""
-                        for rel in list(changed or [])[:30]:
-                            rel_s = str(rel).replace("\\", "/")
-                            # new content from working tree
-                            if hasattr(gitops, "read_working"):
-                                new_c = gitops.read_working(rel_s)
-                            else:
-                                p = Path(proot or ".") / rel_s
-                                new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
-                            # original from baseline HEAD (empty if new file)
-                            if hasattr(gitops, "show_at_head"):
-                                orig = gitops.show_at_head(rel_s, head_sha or None)
-                            else:
-                                orig = ""
-                            files_payload[rel_s] = {"original": orig, "new": new_c}
-                        if files_payload:
-                            queue_pending(str(task.id), files_payload, project_root=proot or Path("."))
-                            meta2 = dict(payload.get("metadata") or {})
-                            meta2["file_changes"] = [
-                                {"file": k, "original": v.get("original", ""), "new": v.get("new", "")}
-                                for k, v in files_payload.items()
-                            ]
-                            payload["metadata"] = meta2
-                            try:
-                                task.raw = payload
-                            except Exception:
-                                pass
-                    except Exception as _diff_exc:
-                        try:
-                            self.log.write(f"diff capture: {_diff_exc}")
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            from utils.cost_tracker import GLOBAL_COST
+            from utils.pipeline_events import task_done as _pev_done, diff_policy as _pev_diff
+            toks = int(getattr(result, "tokens", 0) or 0)
+            if not toks:
+                toks = max(100, len(str(getattr(task, "message", "") or "")) // 3)
+            GLOBAL_COST.record(
+                str(task.id),
+                worker=str(worker.name or ""),
+                provider=str(getattr(worker, "provider", "") or ""),
+                model=str(getattr(worker, "model", "") or ""),
+                tokens_total=toks,
+            )
+            _pev_done(
+                str(task.id),
+                str(worker.name or ""),
+                duration=float(getattr(result, "latency", 0) or 0),
+                commit=commit_sha or "",
+            )
         except Exception:
             pass
+
+    def _llm_success_diff_preview(self, task, proj, gitops, before_snapshot) -> None:
+        """diff_preview: assess_risk + очередь превью-диффа для UI (fail-safe)."""
+        try:
+            if not is_enabled("diff_preview"):
+                raise ImportError("diff_preview disabled")
+            from safety.diff_engine import queue_from_task_result, queue_pending
+            from safety.diff_policy import assess_risk
+            try:
+                _diff_lines = 0
+                for _fp in (files_payload or {}).values():
+                    if isinstance(_fp, dict):
+                        _diff_lines += str(_fp.get("new") or "").count("\n")
+                    else:
+                        _diff_lines += str(_fp or "").count("\n")
+            except Exception:
+                _diff_lines = 0
+            _decision = assess_risk(
+                files=list(getattr(task, "files", None) or []),
+                complexity=int(getattr(task, "complexity", 3) or 3),
+                diff_lines=_diff_lines,
+                message=str(getattr(task, "message", "") or ""),
+            )
+            try:
+                meta_d = dict(getattr(task, "metadata", None) or {})
+                meta_d["diff_policy"] = _decision.to_dict()
+                task.metadata = meta_d
+                try:
+                    from utils.pipeline_events import diff_policy as _pev_diff
+                    _pev_diff(str(task.id), _decision.to_dict())
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            if _decision.action == "require_approval":
+                # still queue for UI — never silent auto-apply on HIGH
+                pass
+            payload = getattr(task, "raw", None) or {}
+            if not isinstance(payload, dict):
+                payload = {}
+            proot = getattr(proj, "root", None) if proj else None
+            queued = queue_from_task_result(payload, project_root=proot)
+            if not queued and gitops and before_snapshot is not None:
+                self._llm_capture_diff_payload(payload, proot, gitops, before_snapshot, task)
+        except Exception:
+            pass
+
+    def _llm_capture_diff_payload(self, payload, proot, gitops, before_snapshot,
+                                  task) -> None:
+        """Собрать files_payload из working tree и поставить превью в очередь.
+
+        queue_pending импортируется здесь: в исходнике импорт жил выше
+        по области видимости (_llm_success_finalize), после распила
+        оказался бы недоступен.
+        """
+        try:
+            from safety.diff_engine import queue_pending
+            changed = []
+            if hasattr(gitops, "changed_files_since"):
+                changed = gitops.changed_files_since(before_snapshot) or []
+            if not changed and hasattr(gitops, "diff_names"):
+                changed = gitops.diff_names() or []
+            # Restrict to task.files if non-empty to reduce parallel bleed
+            tf = [str(f).replace("\\", "/") for f in (task.files or [])]
+            if tf:
+                changed = [c for c in changed if str(c).replace("\\", "/") in tf
+                           or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
+            files_payload = {}
+            head_sha = ""
+            try:
+                head_sha = getattr(before_snapshot, "head", "") or ""
+            except Exception:
+                head_sha = ""
+            for rel in list(changed or [])[:30]:
+                rel_s = str(rel).replace("\\", "/")
+                # new content from working tree
+                if hasattr(gitops, "read_working"):
+                    new_c = gitops.read_working(rel_s)
+                else:
+                    p = Path(proot or ".") / rel_s
+                    new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+                # original from baseline HEAD (empty if new file)
+                if hasattr(gitops, "show_at_head"):
+                    orig = gitops.show_at_head(rel_s, head_sha or None)
+                else:
+                    orig = ""
+                files_payload[rel_s] = {"original": orig, "new": new_c}
+            if files_payload:
+                queue_pending(str(task.id), files_payload, project_root=proot or Path("."))
+                meta2 = dict(payload.get("metadata") or {})
+                meta2["file_changes"] = [
+                    {"file": k, "original": v.get("original", ""), "new": v.get("new", "")}
+                    for k, v in files_payload.items()
+                ]
+                payload["metadata"] = meta2
+                try:
+                    task.raw = payload
+                except Exception:
+                    pass
+        except Exception as _diff_exc:
+            try:
+                self.log.write(f"diff capture: {_diff_exc}")
+            except Exception:
+                pass
+
+    def _llm_success_metrics_emit(self, task, worker, result, commit_sha) -> None:
+        """Отчёты провайдера, бюджет/метрики, логи, событие DONE, трассировка."""
         self.report.record_provider(worker.provider, "DONE")
         self.report.commits += int(bool(commit_sha))
         try:
@@ -963,6 +1010,10 @@ class RPLlmMixin:
             GLOBAL_TRACES.complete(str(task.id), "DONE")
         except Exception:
             pass
+
+    def _llm_success_cache_progress(self, task, proj, ctx, worker, result,
+                                    commit_sha, gitops) -> None:
+        """Кэш, semantic-память, file-sentinel, write_progress, git-cleanup."""
         self._cache_put(
             task, proj,
             method="llm",
@@ -1009,6 +1060,33 @@ class RPLlmMixin:
                 pass
         except Exception:
             pass
+
+    def _llm_success_finalize(
+        self, task, proj, ctx, worker, result, gitops, before_snapshot,
+        commit_sha: str, verify_ok: bool, verify_detail: str, changed: list,
+    ) -> str:
+        """Success-путь _stage_llm_pipeline (TD-012): тело перенесено дословно.
+
+        Финализация DONE: queue.finish, bus.move, _save, отчёты/метрики/кэш,
+        semantic-память, write_progress, git-cleanup. Возвращает "DONE".
+
+        ub-mode (CRAP 84 -> ~2): линейная последовательность разнесена по
+        фазовым хелперам: queue_save -> explain_cost + diff_preview (один
+        общий try-блок, как в исходнике) -> metrics_emit -> cache_progress.
+        """
+        self._llm_success_queue_save(
+            task, worker, result, before_snapshot, commit_sha,
+            verify_ok, verify_detail, changed,
+        )
+        try:
+            self._llm_success_explain_cost(task, worker, result, commit_sha)
+            self._llm_success_diff_preview(task, proj, gitops, before_snapshot)
+        except Exception:
+            pass
+        self._llm_success_metrics_emit(task, worker, result, commit_sha)
+        self._llm_success_cache_progress(
+            task, proj, ctx, worker, result, commit_sha, gitops,
+        )
         return "DONE"
 
     def _llm_workers_exhausted(self, task, gitops, before_snapshot,
