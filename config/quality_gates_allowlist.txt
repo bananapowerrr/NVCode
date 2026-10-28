@@ -1,5 +1,2 @@
-# Frozen CRAP debt at --max 60 (ub-mode allowlist).
-# Remove an entry only after that function is decomposed under the threshold.
-src/core/rp_llm.py::RPLlmMixin._llm_success_finalize
-src/core/rp_llm.py::RPLlmMixin._stage_llm_pipeline
-src/core/router.py::select_executor
+# No frozen CRAP debt at --max 60 (ub-mode).
+# Re-seed: python scripts/quality_gates.py --update-allowlist --max 60

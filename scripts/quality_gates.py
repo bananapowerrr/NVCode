@@ -81,18 +81,17 @@ def complexity(fn: ast.AST) -> int:
         for child in ast.iter_child_nodes(node):
             visit(child)
 
-    for stmt in getattr(fn, "body", []):
-        visit(stmt)
+    for child in ast.iter_child_nodes(fn):
+        visit(child)
     return total
 
 
 def scan(node: ast.AST, prefix: str, path: str, out: list[Fn]) -> None:
-    """Collect functions; class methods get Class.method names."""
     for child in ast.iter_child_nodes(node):
         if isinstance(child, _FUNC_TYPES):
-            end = getattr(child, "end_lineno", None) or child.lineno
+            end = child.end_lineno or child.lineno
             out.append(Fn(path, prefix + child.name, complexity(child), child.lineno, end))
-            scan(child, "", path, out)  # nested defs get flat names
+            scan(child, prefix + child.name + ".", path, out)
         elif isinstance(child, ast.ClassDef):
             scan(child, prefix + child.name + ".", path, out)
         else:
@@ -147,53 +146,56 @@ def normalize_line(line: str) -> str:
     t = line.strip().replace("\t", " ")
     hash_pos = t.find("#")
     if hash_pos >= 0:
-        t = t[:hash_pos]
-    t = t.strip()
+        t = t[:hash_pos].rstrip()
     out: list[str] = []
     i = 0
     while i < len(t):
-        c = t[i]
-        if c in "\"'":
-            q = c
+        ch = t[i]
+        if ch in "'\"":
+            quote = ch
             i += 1
-            while i < len(t) and t[i] != q:
+            while i < len(t) and t[i] != quote:
+                if t[i] == "\\":
+                    i += 2
+                    continue
                 i += 1
-            i += 1
             out.append("S")
+            i += 1
             continue
-        if c.isdigit():
-            while i < len(t) and (t[i].isdigit() or t[i] == "."):
+        if ch.isdigit():
+            while i < len(t) and (t[i].isdigit() or t[i] in ".xXabcdefABCDEF"):
                 i += 1
             out.append("N")
             continue
-        out.append(c)
+        out.append(ch)
         i += 1
     return "".join(out)
 
 
-def duplication_report(roots: list[str], window: int = 6, min_rich: int = 2) -> list[tuple[int, str, str]]:
-    """Duplicated normalized windows; returns (count, first_location, head)."""
-    seen: dict[str, list] = {}
+def duplication_report(roots: list[str], window: int = 6) -> list[tuple[int, str, str]]:
+    """Count normalized 6-line windows occurring 2+ times."""
+    from collections import Counter
+
+    bags: Counter[str] = Counter()
+    locs: dict[str, str] = {}
     for f in iter_py_files(roots):
-        rel = f.as_posix()
         try:
-            lines = f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n").split("\n")
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        norm = [normalize_line(x) for x in lines]
-        for i in range(0, len(norm) - window + 1):
-            win = norm[i:i + window]
-            if any(not x for x in win):
+        norms = [normalize_line(ln) for ln in lines]
+        for i in range(0, max(0, len(norms) - window + 1)):
+            chunk = norms[i : i + window]
+            if not any(c.strip() for c in chunk):
                 continue
-            rich = sum(1 for x in win if ("(" in x or "=" in x))
-            if rich < min_rich:
-                continue
-            key = "\x01".join(win)
-            if key in seen:
-                seen[key][0] += 1
-            else:
-                seen[key] = [1, f"{rel}:{i + 1}", win[0]]
-    out = [(cnt, loc, head) for cnt, loc, head in seen.values() if cnt >= 2]
+            key = "\n".join(chunk)
+            bags[key] += 1
+            locs.setdefault(key, f"{f.as_posix()}:{i + 1}")
+    out: list[tuple[int, str, str]] = []
+    for key, cnt in bags.items():
+        if cnt >= 2:
+            head = key.split("\n")[0] if key else ""
+            out.append((cnt, locs.get(key, "?"), head))
     out.sort(key=lambda x: (-x[0], x[1]))
     return out
 
@@ -236,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.gate:
+        if errors:
+            print(f"[quality-gates] GATE FAIL: {len(errors)} file(s) failed to parse:")
+            for e in errors:
+                print(f"  {e}")
+            return 1
         allowed = load_allowlist(args.allowlist)
         violations = [f for f in fns if f.comp > args.max and f.key not in allowed]
         if violations:
