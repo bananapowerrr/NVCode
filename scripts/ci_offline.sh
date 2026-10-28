@@ -42,7 +42,7 @@ fi
 echo
 
 echo "== 4. targeted pytest =="
-if python -m pytest -q   tests/test_run_log.py   tests/test_doctor_verdict.py   tests/test_format_task_report.py   tests/test_history_report_wire.py   tests/test_p0_fail_closed.py   tests/test_p1_loader_queue.py   tests/test_analyze_reconcile.py   tests/test_plan_done_ui_message.py   tests/test_status_board_text.py   tests/test_quality_gates.py   tests/test_diff_preview_td032.py   --tb=line; then
+if python -m pytest -q   tests/test_run_log.py   tests/test_doctor_verdict.py   tests/test_format_task_report.py   tests/test_history_report_wire.py   tests/test_p0_fail_closed.py   tests/test_p1_loader_queue.py   tests/test_analyze_reconcile.py   tests/test_plan_done_ui_message.py   tests/test_status_board_text.py   tests/test_quality_gates.py   tests/test_diff_preview_td032.py   tests/test_task_result_returns.py   --tb=line; then
   echo "  pytest OK"
 else
   echo "  pytest FAIL"

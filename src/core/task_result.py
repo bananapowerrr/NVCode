@@ -274,6 +274,7 @@ def _tr_prepare(task_row: dict[str, Any] | None) -> tuple[dict[str, Any], dict[s
     meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     if not meta and isinstance(result.get("metadata"), dict):
         meta = result["metadata"]
+    return row, result, _raw_result, meta
 
 
 def _tr_normalize_worker_result(result: dict[str, Any], _raw_result: Any) -> dict[str, Any]:
@@ -313,6 +314,7 @@ def _tr_normalize_worker_result(result: dict[str, Any], _raw_result: Any) -> dic
                     result.pop("ok", None)
     except Exception:
         pass
+    return result
 
 
 def _tr_status(row: dict[str, Any], result: dict[str, Any]) -> tuple[bool, str]:
@@ -361,6 +363,7 @@ def _tr_status(row: dict[str, Any], result: dict[str, Any]) -> tuple[bool, str]:
         ok = False
         if status in ("DONE", "SUCCESS"):
             status = "ERROR"
+    return ok, status
 
 
 def _tr_verification(result: dict[str, Any], meta: dict[str, Any], ok: bool, status: str) -> tuple[dict[str, Any], bool, str]:
@@ -412,6 +415,7 @@ def _tr_verification(result: dict[str, Any], meta: dict[str, Any], ok: bool, sta
             ver = rep.to_dict()
         except Exception:
             pass
+    return ver, ok, status
 
 
 def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
@@ -472,6 +476,7 @@ def _tr_changes(result: dict[str, Any], meta: dict[str, Any]) -> ChangeSet:
             or ""
         )[:2000],
     )
+    return changes
 
 
 def _tr_timeline(meta: dict[str, Any], result: dict[str, Any], tid: str) -> list[str]:
@@ -493,6 +498,7 @@ def _tr_timeline(meta: dict[str, Any], result: dict[str, Any], tid: str) -> list
             timeline = [str(x) for x in tr][:40]
         elif isinstance(tr, dict) and isinstance(tr.get("events"), list):
             timeline = [str(x) for x in tr["events"]][:40]
+    return timeline
 
 
 def build_task_result(task_row: dict[str, Any] | None) -> TaskResult:
