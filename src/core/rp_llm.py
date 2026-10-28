@@ -882,6 +882,18 @@ class RPLlmMixin:
                 raise ImportError("diff_preview disabled")
             from safety.diff_engine import queue_from_task_result, queue_pending
             from safety.diff_policy import assess_risk
+            payload = getattr(task, "raw", None) or {}
+            if not isinstance(payload, dict):
+                payload = {}
+            proot = getattr(proj, "root", None) if proj else None
+            # TD-032: files_payload собирается ДО подсчёта. Раньше переменная
+            # читалась до определения (NameError глушился inner except),
+            # и assess_risk всегда получал diff_lines=0.
+            try:
+                files_payload = self._llm_read_diff_payload(
+                    gitops, before_snapshot, task, proot)
+            except Exception:
+                files_payload = {}
             try:
                 _diff_lines = 0
                 for _fp in (files_payload or {}).values():
@@ -911,15 +923,55 @@ class RPLlmMixin:
             if _decision.action == "require_approval":
                 # still queue for UI — never silent auto-apply on HIGH
                 pass
-            payload = getattr(task, "raw", None) or {}
-            if not isinstance(payload, dict):
-                payload = {}
-            proot = getattr(proj, "root", None) if proj else None
             queued = queue_from_task_result(payload, project_root=proot)
             if not queued and gitops and before_snapshot is not None:
                 self._llm_capture_diff_payload(payload, proot, gitops, before_snapshot, task)
         except Exception:
             pass
+
+    def _llm_read_diff_payload(self, gitops, before_snapshot, task, proot) -> dict:
+        """files_payload из working tree: {rel: {"original": ..., "new": ...}}.
+
+        TD-032: чтение вынесено из _llm_capture_diff_payload, чтобы
+        _llm_success_diff_preview считал _diff_lines по РЕАЛЬНЫМ
+        изменениям. Раньше files_payload читался до определения,
+        NameError молча ловился, и assess_risk всегда получал
+        diff_lines=0. Ошибки здесь не гасятся: capture логирует их,
+        preview обнуляет локально через свой внутренний обработчик.
+        """
+        if gitops is None or before_snapshot is None:
+            return {}
+        changed = []
+        if hasattr(gitops, "changed_files_since"):
+            changed = gitops.changed_files_since(before_snapshot) or []
+        if not changed and hasattr(gitops, "diff_names"):
+            changed = gitops.diff_names() or []
+        # Restrict to task.files if non-empty to reduce parallel bleed
+        tf = [str(f).replace("\\", "/") for f in (task.files or [])]
+        if tf:
+            changed = [c for c in changed if str(c).replace("\\", "/") in tf
+                       or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
+        files_payload = {}
+        head_sha = ""
+        try:
+            head_sha = getattr(before_snapshot, "head", "") or ""
+        except Exception:
+            head_sha = ""
+        for rel in list(changed or [])[:30]:
+            rel_s = str(rel).replace("\\", "/")
+            # new content from working tree
+            if hasattr(gitops, "read_working"):
+                new_c = gitops.read_working(rel_s)
+            else:
+                p = Path(proot or ".") / rel_s
+                new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+            # original from baseline HEAD (empty if new file)
+            if hasattr(gitops, "show_at_head"):
+                orig = gitops.show_at_head(rel_s, head_sha or None)
+            else:
+                orig = ""
+            files_payload[rel_s] = {"original": orig, "new": new_c}
+        return files_payload
 
     def _llm_capture_diff_payload(self, payload, proot, gitops, before_snapshot,
                                   task) -> None:
@@ -931,36 +983,8 @@ class RPLlmMixin:
         """
         try:
             from safety.diff_engine import queue_pending
-            changed = []
-            if hasattr(gitops, "changed_files_since"):
-                changed = gitops.changed_files_since(before_snapshot) or []
-            if not changed and hasattr(gitops, "diff_names"):
-                changed = gitops.diff_names() or []
-            # Restrict to task.files if non-empty to reduce parallel bleed
-            tf = [str(f).replace("\\", "/") for f in (task.files or [])]
-            if tf:
-                changed = [c for c in changed if str(c).replace("\\", "/") in tf
-                           or any(str(c).replace("\\", "/").endswith(x) for x in tf)]
-            files_payload = {}
-            head_sha = ""
-            try:
-                head_sha = getattr(before_snapshot, "head", "") or ""
-            except Exception:
-                head_sha = ""
-            for rel in list(changed or [])[:30]:
-                rel_s = str(rel).replace("\\", "/")
-                # new content from working tree
-                if hasattr(gitops, "read_working"):
-                    new_c = gitops.read_working(rel_s)
-                else:
-                    p = Path(proot or ".") / rel_s
-                    new_c = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
-                # original from baseline HEAD (empty if new file)
-                if hasattr(gitops, "show_at_head"):
-                    orig = gitops.show_at_head(rel_s, head_sha or None)
-                else:
-                    orig = ""
-                files_payload[rel_s] = {"original": orig, "new": new_c}
+            files_payload = self._llm_read_diff_payload(
+                gitops, before_snapshot, task, proot)
             if files_payload:
                 queue_pending(str(task.id), files_payload, project_root=proot or Path("."))
                 meta2 = dict(payload.get("metadata") or {})
