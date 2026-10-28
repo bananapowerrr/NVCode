@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
 """Роутер: Stage 3 complexity + context fit + soft quota + ranker."""
 from __future__ import annotations
 
@@ -289,6 +289,7 @@ def _worker_skip_reason(
         wc = getattr(w, "capabilities", None) or ()
         if wc and required_cap not in wc:
             return f"required_cap[{required_cap}]"
+    return None
 
 
 def _worker_score(
@@ -350,6 +351,7 @@ def _worker_score(
             score, getattr(w, "harness", "cli"), w.provider, w.model,
             complexity=complexity, task_type=task_type,
         )
+    return score
 
 
 def select_executor(workers, health, raw: dict[str, Any] | None,
@@ -383,7 +385,6 @@ def select_executor(workers, health, raw: dict[str, Any] | None,
         _LOG.info("select_executor: skip %s (%s) task=%s requested=%s",
                   w.name, reason, _task_id or "-", requested or "-")
 
-    for w in workers:
     for w in workers:
         reason = _worker_skip_reason(
             w, health=health, capacity=capacity, cap_worker_usable=cap_worker_usable,
